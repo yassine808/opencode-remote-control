@@ -41,7 +41,11 @@ Windows PC ── OpenCode background service (127.0.0.1:49374 on this machine)
               ▲ PowerShell TUI(s) attach here — every session is visible
 ```
 
-Repo layout: single Expo app at `mobile/` (no monorepo — deliberate deviation; a workspace would have been pure overhead for a v1 vertical slice).
+Repo layout: single Expo app at `mobile/` plus `plugins/rc-dot/` (PC-side TUI indicator — see below). No monorepo — deliberate deviation; a workspace would have been pure overhead for a v1 vertical slice.
+
+### PC-side indicator (plugins/rc-dot)
+
+CLI plugin for the PC: the TUI footer shows green `● RC active` when a paired client has a live connection to the background server, red `● RC disabled` otherwise — a glance check while sitting at the PC. Install: copy the folder to `~/.config/opencode/plugins/rc-dot/` and restart OpenCode (details in `plugins/rc-dot/README.md`).
 
 ### Decisions (as-built)
 
