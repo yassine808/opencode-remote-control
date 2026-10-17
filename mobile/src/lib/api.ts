@@ -158,10 +158,25 @@ export class OpenCodeApi {
     );
   }
 
-  permissionRequests(signal?: AbortSignal) {
+  /**
+   * Pending approvals for one project directory. The endpoint is location-scoped
+   * (`location[directory]` query param); without it the server answers for its
+   * own launch directory only — so each project dir needs its own call.
+   */
+  permissionRequestsAt(directory: string, signal?: AbortSignal) {
     return this.request<{ data: PermissionRequest[] }>(
       'GET',
-      '/api/permission/request',
+      `/api/permission/request?location%5Bdirectory%5D=${encodeURIComponent(directory)}`,
+      undefined,
+      signal,
+    );
+  }
+
+  /** Pending approvals for one session — location-free, the right call for a session screen. */
+  sessionPermissionRequests(sessionID: string, signal?: AbortSignal) {
+    return this.request<{ data: PermissionRequest[] }>(
+      'GET',
+      `/api/session/${sessionID}/permission`,
       undefined,
       signal,
     );

@@ -51,11 +51,16 @@ export default function SessionsScreen() {
       if (!api) return;
       if (!opts.silent) setRefreshing(true);
       try {
-        const [list, act, perms] = await Promise.all([
-          api.sessions(50),
-          api.activeSessions(),
-          api.permissionRequests(),
-        ]);
+        const [list, act] = await Promise.all([api.sessions(50), api.activeSessions()]);
+        // Approvals are location-scoped on the server, so gather per project directory.
+        const directories = Array.from(
+          new Set(
+            list.data
+              .map((s) => s.location?.directory)
+              .filter((d): d is string => typeof d === 'string' && d.length > 0),
+          ),
+        );
+        const perms = await Promise.all(directories.map((dir) => api.permissionRequestsAt(dir)));
         const sorted = [...list.data].sort((a, b) => {
           const aRun = act.data[a.id] ? 1 : 0;
           const bRun = act.data[b.id] ? 1 : 0;
@@ -65,7 +70,9 @@ export default function SessionsScreen() {
         setSessions(sorted);
         setActive(act.data);
         const counts: Record<string, number> = {};
-        for (const p of perms.data) counts[p.sessionID] = (counts[p.sessionID] ?? 0) + 1;
+        for (const res of perms) {
+          for (const p of res.data) counts[p.sessionID] = (counts[p.sessionID] ?? 0) + 1;
+        }
         setApprovals(counts);
         setError(null);
       } catch (err) {

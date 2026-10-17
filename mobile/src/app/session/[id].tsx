@@ -320,11 +320,11 @@ export default function SessionScreen() {
     try {
       const [session, perms, act] = await Promise.all([
         api.session(sessionID),
-        api.permissionRequests(),
+        api.sessionPermissionRequests(sessionID),
         api.activeSessions(),
       ]);
       setSessionInfo(session.data);
-      setPermissions(perms.data.filter((p) => p.sessionID === sessionID));
+      setPermissions(perms.data);
       setRunning(Boolean(act.data[sessionID]));
     } catch {
       // transient — SSE reconnect or next poll will retry
@@ -490,9 +490,9 @@ export default function SessionScreen() {
     let alive = true;
     const refresh = async () => {
       try {
-        const perms = await api.permissionRequests();
+        const perms = await api.sessionPermissionRequests(sessionID);
         if (!alive) return;
-        const mine = perms.data.filter((p) => p.sessionID === sessionID);
+        const mine = perms.data;
         setPermissions((prev) => {
           const same = prev.length === mine.length && prev.every((p, i) => p.id === mine[i]?.id);
           return same ? prev : mine;
