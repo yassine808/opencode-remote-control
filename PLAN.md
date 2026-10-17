@@ -61,7 +61,9 @@ Confirmed live:
 - Pairing code → token exchange works; token authenticates as Basic password.
 - `POST /api/pair` with a paired token mints a fresh code that redeems to a new token (**silent renewal works — DD3 valid**).
 - Prompt send (`delivery: "steer"` default), message list (`order=asc|desc`, cursor), session create (explicit model), interrupt, session delete — all work as documented.
-- Permission list + reply endpoints exist; **reply not exercised live** because shell is auto-allowed on this machine (no request was fired).
+- Permission flow **exercised live end-to-end**: with permissions set to `ask`, a bash call blocked (`status:"running"`, `executed:false`) → pending request listed → `POST …/permission/{requestID}/reply {decision:"once"}` → tool completed, output verified in transcript.
+- Permission requests are **location-scoped**: `GET /api/permission/request` answers for the server's own directory unless you pass `?location[directory]=<dir>`; sessions in project dirs need per-directory calls. `GET /api/session/{id}/permission` is the location-free per-session variant (used by the session screen). Request shape: `{id, sessionID, action:"shell", resources:[cmd], save:[always-pattern], source:{type, messageID, id}}`.
+- Reply body is `{decision: "once"|"always"|"reject"}` (plus optional `message`); the reply response has an empty body.
 - SSE event vocabulary captured: streaming deltas (`session.text.delta`, `session.reasoning.delta`, `session.usage.updated`), durable lifecycle (`inbox.enqueued/delivered`, `execution.started/succeeded/failed`, `step.started/streamed/ended`, `renamed`, `instructions.updated`), tool events (`tool.input.started/ended`, `tool.called`, `tool.progress`, `tool.success`). Envelope: `{id, created, type, location?, data, durable:{aggregateID, seq, version}}`.
 - Token format: `<unix-expiry>.<signature>` — expiry parsed locally, no round-trip needed.
 
@@ -84,7 +86,7 @@ Dev notes discovered in M0:
 
 A remote prompt runs code on the PC as Yassine's Windows user. Approvals are the entire safety boundary.
 
-- **Set permissions to `ask`** for `bash` and `edit` in OpenCode config so approval cards actually fire (on this machine shell is currently auto-allowed — the approval UI is built but has never been exercised live).
+- **Permissions are set to `ask`** (`opencode.json`: `bash`/`edit`; `cli.json`: `session.permissions: "prompt"`), verified live. Observed behavior: a session keeps the permission set from when it started — older sessions stay auto-allowed; start a fresh session to exercise approvals.
 - **Long random server password** before enabling remote access; changing it signs out every device (there is no per-device revoke — that's the lost-phone procedure).
 - Run OpenCode as a normal user, not administrator.
 - Keep the PC awake when away: `powercfg /change standby-timeout-ac 0` (or Never in Settings).
