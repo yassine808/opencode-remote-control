@@ -1,0 +1,262 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-17T18:35:52Z",
+  "title": "Design System: OpenCode Remote",
+  "extensions": {
+    "colorMeta": {
+      "deep-watch": {
+        "role": "neutral",
+        "displayName": "Deep Watch",
+        "canonical": "oklch(18% 0.019 246)",
+        "tonalRamp": ["#0a0e11", "#22272c", "#3d4349", "#5a6169", "#78818a", "#98a3ad", "#bac6d0", "#deeaf4"]
+      },
+      "panel-navy": {
+        "role": "neutral",
+        "displayName": "Panel Navy",
+        "canonical": "oklch(22% 0.025 247)",
+        "tonalRamp": ["#090e12", "#21272d", "#3b434b", "#58626b", "#76828d", "#95a3b1", "#b7c6d4", "#dbeaf8"]
+      },
+      "lifted-panel": {
+        "role": "neutral",
+        "displayName": "Lifted Panel",
+        "canonical": "oklch(27% 0.032 249)",
+        "tonalRamp": ["#080e14", "#1f2730", "#39444e", "#56626f", "#738291", "#93a4b5", "#b5c6d9", "#d8eafd"]
+      },
+      "code-well": {
+        "role": "neutral",
+        "displayName": "Code Well",
+        "canonical": "oklch(20% 0.025 249)",
+        "tonalRamp": ["#090e12", "#21272e", "#3b434b", "#58626b", "#76828d", "#96a3b1", "#b8c6d4", "#dceaf8"]
+      },
+      "instrument-hairline": {
+        "role": "neutral",
+        "displayName": "Instrument Hairline",
+        "canonical": "oklch(29% 0.032 249)",
+        "tonalRamp": ["#080e14", "#1f272f", "#39444e", "#56626f", "#738291", "#93a4b5", "#b5c6d8", "#d8eafd"]
+      },
+      "starlight": {
+        "role": "neutral",
+        "displayName": "Starlight",
+        "canonical": "oklch(95% 0.013 256)",
+        "tonalRamp": ["#0c0d10", "#24272a", "#3f4347", "#5d6166", "#7c8187", "#9ca2a9", "#bfc5cc", "#e2e8f0"]
+      },
+      "haze": {
+        "role": "neutral",
+        "displayName": "Haze",
+        "canonical": "oklch(72% 0.030 258)",
+        "tonalRamp": ["#090d14", "#21272f", "#3c434d", "#58616e", "#778190", "#97a2b4", "#b9c5d8", "#dce9fc"]
+      },
+      "fog": {
+        "role": "neutral",
+        "displayName": "Fog",
+        "canonical": "oklch(55% 0.033 260)",
+        "tonalRamp": ["#090d14", "#212730", "#3b434f", "#586170", "#768192", "#96a2b6", "#b8c5da", "#dbe9ff"]
+      },
+      "signal-cobalt": {
+        "role": "primary",
+        "displayName": "Signal Cobalt",
+        "canonical": "oklch(67% 0.173 270)",
+        "tonalRamp": ["#040531", "#141f58", "#2a3b81", "#4259ad", "#5c78db", "#7899ff", "#98bcff", "#bae1ff"]
+      },
+      "on-signal": {
+        "role": "primary",
+        "displayName": "On Signal",
+        "canonical": "oklch(18% 0.019 246)"
+      },
+      "cobalt-wash": {
+        "role": "primary",
+        "displayName": "Cobalt Wash",
+        "canonical": "#6C8CFF22"
+      },
+      "watch-cyan": {
+        "role": "secondary",
+        "displayName": "Watch Cyan",
+        "canonical": "oklch(79% 0.129 211)",
+        "tonalRamp": ["#00131c", "#002f3b", "#004e5d", "#006f81", "#0092a7", "#00b6ce", "#3edaf3", "#6dffff"]
+      },
+      "cyan-wash": {
+        "role": "secondary",
+        "displayName": "Cyan Wash",
+        "canonical": "#2CCFE81F"
+      },
+      "caution-amber": {
+        "role": "secondary",
+        "displayName": "Caution Amber",
+        "canonical": "oklch(79% 0.147 73)",
+        "tonalRamp": ["#1e0500", "#3f1c00", "#623700", "#875300", "#af7100", "#d79119", "#fdb448", "#ffd86f"]
+      },
+      "amber-wash": {
+        "role": "secondary",
+        "displayName": "Amber Wash",
+        "canonical": "#F2A93B22"
+      },
+      "alert-coral": {
+        "role": "secondary",
+        "displayName": "Alert Coral",
+        "canonical": "oklch(72% 0.180 15)",
+        "tonalRamp": ["#280003", "#4e0115", "#761b2d", "#a13546", "#ce4f61", "#fc6a7e", "#ff8d9f", "#ffb1c2"]
+      },
+      "coral-wash": {
+        "role": "secondary",
+        "displayName": "Coral Wash",
+        "canonical": "#FF6B7F1F"
+      },
+      "cleared-mint": {
+        "role": "secondary",
+        "displayName": "Cleared Mint",
+        "canonical": "oklch(78% 0.154 162)",
+        "tonalRamp": ["#001603", "#003317", "#005330", "#00754a", "#009966", "#18be83", "#4fe2a5", "#79ffc8"]
+      },
+      "mint-wash": {
+        "role": "secondary",
+        "displayName": "Mint Wash",
+        "canonical": "#3DD59820"
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Screen-scale statements and empty-state moments. Rare by design." },
+      "headline": { "displayName": "Headline", "purpose": "Large section moments and result statements." },
+      "title": { "displayName": "Title", "purpose": "Section headers, sheet titles, empty-state titles." },
+      "body": { "displayName": "Body", "purpose": "Transcripts, descriptions, message input. Content is capped at 760px wide so lines never sprawl." },
+      "body-small": { "displayName": "Body Small", "purpose": "Dense card content, status lines, banner text." },
+      "label": { "displayName": "Label", "purpose": "Pills, timestamps, captions, metadata. Sentence case, never uppercase." },
+      "code": { "displayName": "Code", "purpose": "File paths, commands, model ids, resource chips. Machine data only." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "press-spring", "value": "scale(0.97) on press-in; spring release (RN spring, speed 50, bounciness 0); CSS: transform 120ms cubic-bezier(0.2, 0, 0, 1)", "purpose": "Buttons and cards acknowledge touch without bounce." },
+      { "name": "entrance-rise", "value": "opacity 0 to 1, translateY 12px to 0, 380ms cubic-bezier(0.33, 1, 0.68, 1)", "purpose": "Once-per-screen-load entrance. Skipped under reduced motion." },
+      { "name": "approval-spring", "value": "translateY 40px to 0 with slight overshoot (RN spring, speed 14, bounciness 7; CSS ~ cubic-bezier(0.34, 1.56, 0.64, 1), 320ms)", "purpose": "The approval card's arrival, the one interruption the UI allows itself." },
+      { "name": "pulse-ring", "value": "radiating ring scales 1 to 3, opacity 0.6 to 0, 1500ms cubic-bezier(0.25, 0.46, 0.45, 0.94) loop", "purpose": "Live-status dot heartbeat. One pulsing element per screen, maximum." },
+      { "name": "typing-dots", "value": "three 6px dots, 360ms up/down, 140ms stagger", "purpose": "Shown while the agent is composing." },
+      { "name": "progress-sweep", "value": "2px bar sweeping under the header, 1400ms ease-in-out cubic loop", "purpose": "Work-in-progress indicator." },
+      { "name": "skeleton-breath", "value": "opacity 0.45 to 0.9, 900ms ease-in-out quadratic", "purpose": "Loading placeholders breathe instead of shimmering." },
+      { "name": "chevron-turn", "value": "rotate -45deg to 45deg, 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94)", "purpose": "Expand and collapse affordance." }
+    ],
+    "breakpoints": [
+      { "name": "content-max", "value": "760px", "purpose": "Max width for lists, headers, and the transcript. Content never sprawls on tablets or web." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action that matters on a screen (Allow once, Send). Signal Cobalt with On-Signal text.",
+      "html": "<button class=\"ds-btn-primary\">Allow once</button>",
+      "css": ".ds-btn-primary { min-height: 44px; padding: 0 24px; border: 1px solid transparent; border-radius: 14px; background: #6C8CFF; color: #0A1219; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-btn-primary:hover { background: #7899FF; } .ds-btn-primary:active { transform: scale(0.97); } .ds-btn-primary:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.5; cursor: default; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default weight for routine confirms and neutral actions. Panel Navy with a hairline seam.",
+      "html": "<button class=\"ds-btn-secondary\">Always</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; padding: 0 24px; border: 1px solid #1F2D3B; border-radius: 14px; background: #111C26; color: #E8EEF6; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-btn-secondary:hover { background: #1B2937; } .ds-btn-secondary:active { transform: scale(0.97); } .ds-btn-secondary:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-btn-secondary:disabled { opacity: 0.5; cursor: default; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Quiet-until-pressed destructive path (Reject). Coral wash, never a solid saturated fill.",
+      "html": "<button class=\"ds-btn-danger\">Reject</button>",
+      "css": ".ds-btn-danger { min-height: 44px; padding: 0 24px; border: 1px solid transparent; border-radius: 14px; background: #FF6B7F1F; color: #FF6B7F; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-btn-danger:hover { background: #FF6B7F2E; } .ds-btn-danger:active { transform: scale(0.97); } .ds-btn-danger:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-btn-danger:disabled { opacity: 0.5; cursor: default; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Inline tertiary actions. No surface until hovered.",
+      "html": "<button class=\"ds-btn-ghost\">View diff</button>",
+      "css": ".ds-btn-ghost { min-height: 44px; padding: 0 24px; border: 1px solid transparent; border-radius: 14px; background: transparent; color: #6C8CFF; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-btn-ghost:hover { background: #6C8CFF22; } .ds-btn-ghost:active { transform: scale(0.97); } .ds-btn-ghost:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "State in one glance: wash background, state text, and a dot. The label carries the state so color is never the only signal.",
+      "html": "<span class=\"ds-pill ds-pill--waiting\"><i class=\"ds-pill-dot\"></i>Waiting for your approval</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font: 600 12px/16px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; letter-spacing: 0.1px; } .ds-pill--working { background: #2CCFE81F; color: #2CCFE8; } .ds-pill--waiting { background: #F2A93B22; color: #F2A93B; } .ds-pill--failed { background: #FF6B7F1F; color: #FF6B7F; } .ds-pill--done { background: #3DD59820; color: #3DD598; } .ds-pill--tag { background: #1B2937; color: #9AA6B8; font-weight: 500; } .ds-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; } .ds-pill--working .ds-pill-dot, .ds-pill--waiting .ds-pill-dot { animation: ds-dot-pulse 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite; } @keyframes ds-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } } @media (prefers-reduced-motion: reduce) { .ds-pill-dot { animation: none; } }"
+    },
+    {
+      "name": "Session Card",
+      "kind": "card",
+      "refersTo": "session-card",
+      "description": "Home-list card. A 4px left rail carries state before a single word is read: amber wait, cyan work, transparent idle.",
+      "html": "<div class=\"ds-session ds-session--working\"><span class=\"ds-session-rail\"></span><div class=\"ds-session-body\"><div class=\"ds-session-top\"><strong>Refactor session header</strong><time>2m ago</time></div><div class=\"ds-session-path\">projects/opencode-remote-control</div><div class=\"ds-session-status\"><i></i>Working&#8230;</div></div></div>",
+      "css": ".ds-session { display: flex; background: #111C26; border: 1px solid #1F2D3B; border-radius: 20px; overflow: hidden; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-session:hover { background: #1B2937; } .ds-session:active { transform: scale(0.985); } .ds-session-rail { width: 4px; flex-shrink: 0; background: transparent; } .ds-session--working .ds-session-rail { background: #2CCFE8; } .ds-session--waiting .ds-session-rail { background: #F2A93B; } .ds-session-body { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 16px; min-width: 0; } .ds-session-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } .ds-session-top strong { font: 600 16px/22px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #E8EEF6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-session-top time { font: 500 12px/16px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #677386; flex-shrink: 0; } .ds-session-path { font: 400 12.5px/18px 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; color: #677386; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-session-status { display: flex; align-items: center; gap: 8px; font: 400 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #2CCFE8; } .ds-session--waiting .ds-session-status { color: #F2A93B; } .ds-session-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }"
+    },
+    {
+      "name": "Approval Card",
+      "kind": "card",
+      "refersTo": "approval-card",
+      "description": "The signature component: docks above the composer, wears the system's only state border (1.5px amber ring), arrives with a spring.",
+      "html": "<div class=\"ds-approval\"><div class=\"ds-approval-head\"><i class=\"ds-approval-dot\"></i>Approval needed</div><p class=\"ds-approval-msg\">Wants to run <code>git push origin main</code></p><div class=\"ds-approval-chip\">projects/opencode-remote-control</div><div class=\"ds-approval-row\"><button class=\"ds-approval-btn ds-approval-btn--reject\">Reject</button><button class=\"ds-approval-btn ds-approval-btn--always\">Always</button><button class=\"ds-approval-btn ds-approval-btn--allow\">Allow once</button></div></div>",
+      "css": ".ds-approval { display: flex; flex-direction: column; gap: 10px; background: #111C26; border: 1.5px solid #F2A93B; border-radius: 20px; padding: 16px; } .ds-approval-head { display: flex; align-items: center; gap: 8px; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #E8EEF6; } .ds-approval-dot { width: 8px; height: 8px; border-radius: 50%; background: #F2A93B; animation: ds-approval-pulse 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite; } @keyframes ds-approval-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(242, 169, 59, 0.45); } 50% { box-shadow: 0 0 0 6px rgba(242, 169, 59, 0); } } .ds-approval-msg { margin: 0; font: 400 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #9AA6B8; } .ds-approval-msg code { font: 400 12.5px/18px 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; color: #E8EEF6; background: #0D1721; border-radius: 6px; padding: 2px 6px; } .ds-approval-chip { align-self: flex-start; font: 400 12.5px/18px 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; color: #9AA6B8; background: #0D1721; border: 1px solid #1F2D3B; border-radius: 8px; padding: 6px 10px; } .ds-approval-row { display: flex; gap: 8px; margin-top: 2px; } .ds-approval-btn { min-height: 44px; border: 1px solid transparent; border-radius: 14px; font: 600 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-approval-btn:active { transform: scale(0.97); } .ds-approval-btn:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-approval-btn--reject { background: #FF6B7F1F; color: #FF6B7F; padding: 0 14px; } .ds-approval-btn--always { background: #111C26; color: #E8EEF6; border-color: #1F2D3B; padding: 0 14px; } .ds-approval-btn--allow { flex: 1; background: #6C8CFF; color: #0A1219; } @media (prefers-reduced-motion: reduce) { .ds-approval-dot { animation: none; } }"
+    },
+    {
+      "name": "Composer Field",
+      "kind": "input",
+      "refersTo": "composer-field",
+      "description": "The capsule that waits. Hairline seam turns cobalt on focus; the send button is a 38px circle.",
+      "html": "<div class=\"ds-composer\"><span class=\"ds-composer-placeholder\">Message OpenCode&#8230;</span><button class=\"ds-composer-send\" aria-label=\"Send\"><svg width=\"14\" height=\"16\" viewBox=\"0 0 14 16\" fill=\"none\"><path d=\"M7 14V2M7 2L2 7M7 2L12 7\" stroke=\"#0A1219\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button></div>",
+      "css": ".ds-composer { display: flex; align-items: flex-end; gap: 8px; min-height: 48px; background: #111C26; border: 1px solid #1F2D3B; border-radius: 26px; padding: 5px 5px 5px 16px; } .ds-composer:focus-within { border-color: #6C8CFF; } .ds-composer-placeholder { flex: 1; align-self: center; font: 400 16px/22px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color: #677386; } .ds-composer-send { width: 38px; height: 38px; flex-shrink: 0; border: none; border-radius: 19px; background: #6C8CFF; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease; } .ds-composer-send:hover { background: #7899FF; } .ds-composer-send:active { transform: scale(0.94); } .ds-composer-send:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-composer-send:disabled { background: #1B2937; } .ds-composer-send:disabled path { stroke: #677386; }"
+    },
+    {
+      "name": "Banner",
+      "kind": "custom",
+      "refersTo": "banner",
+      "description": "Full-width status strip that slides in. Tones mirror the signal colors: danger, warn, success, and quiet info.",
+      "html": "<div class=\"ds-banner ds-banner--danger\" role=\"status\">Connection lost &#8212; reconnecting&#8230;</div>",
+      "css": ".ds-banner { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 14px; font: 400 14px/20px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; } .ds-banner--danger { background: #FF6B7F1F; color: #FF6B7F; } .ds-banner--warn { background: #F2A93B22; color: #F2A93B; } .ds-banner--success { background: #3DD59820; color: #3DD598; } .ds-banner--info { background: #111C26; border: 1px solid #1F2D3B; color: #9AA6B8; }"
+    },
+    {
+      "name": "App Header",
+      "kind": "nav",
+      "refersTo": "app-header",
+      "description": "Minimal nav: hairline bottom seam, a view-drawn chevron at a 44px target, one title. Chrome stays out of the deck's way.",
+      "html": "<header class=\"ds-header\"><button class=\"ds-header-back\" aria-label=\"Back\"><svg width=\"10\" height=\"16\" viewBox=\"0 0 10 16\" fill=\"none\"><path d=\"M8 2 2 8l6 6\" stroke=\"#E8EEF6\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button><span class=\"ds-header-title\">Refactor session header</span></header>",
+      "css": ".ds-header { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 8px; background: #0A1219; border-bottom: 1px solid #1F2D3B; font: 600 16px/22px 'Spline Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; } .ds-header-back { width: 44px; height: 44px; border: none; border-radius: 14px; background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background-color 120ms ease; } .ds-header-back:hover { background: #1B2937; } .ds-header-back:focus-visible { outline: 2px solid #6C8CFF; outline-offset: 2px; } .ds-header-title { color: #E8EEF6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Flight Deck",
+    "overview": "This is the flight deck of a quiet aircraft: a dark instrument panel, a handful of state lights, one operator watching a machine think. The system exists so a glance answers the only question that matters - what is the agent doing, and does it need me? - and so the two decisions that require a hand (approve, steer) are always one thumb-reach away. Nothing on the deck glows for decoration: every cyan, amber, coral, and mint light means something specific, and the moment it stops meaning something, it stops glowing.\n\nDensity is deliberately low. The phone is checked in passing, so each screen carries one dominant reading: a list of sessions with state rails, a transcript that breathes, a composer that waits. Depth comes from tone, not shadow - stepped navy surfaces separated by hairline seams, like panel sections bolted together.\n\nThe system explicitly rejects the AI-slop SaaS look (gradient accents, identical icon + title card grids, decorative glassmorphism, big-number hero metrics), the chat-app clone (messenger bubbles and chat chrome), and the admin dashboard (data-table-first screens, widget walls, dense toolbars). If any screen could pass for one of those, it has failed, regardless of polish.",
+    "keyCharacteristics": [
+      "Dark-first deck navy (#0A1219) with a frost-white day mode that mirrors it exactly.",
+      "Color is state, never decoration: cobalt = action, cyan = working, amber = needs you, coral = failed, mint = succeeded.",
+      "Flat with tonal layering and hairline seams. Zero shadows anywhere.",
+      "Tactile and alive: press-springs, pulsing status dots, a spring-up approval card - motion reserved for feedback and the one interruption the UI allows itself.",
+      "Instrument typography: one system sans (Spline Sans on web), tightened at scale; monospace only for machine data."
+    ],
+    "rules": [
+      { "name": "The State-Only Color Rule", "body": "Color communicates state or action, never mood. If a surface is cobalt, it is because it is the action on that screen. There are no tinted sections, no colored headers, no decorative accents.", "section": "colors" },
+      { "name": "The One Glow Rule", "body": "A screen may have exactly one pulsing element - the thing that needs you. Pulse is a heartbeat, not wallpaper.", "section": "colors" },
+      { "name": "The Wash Rule", "body": "State colors become surfaces only as washes (~12-13% alpha). Solid saturated fills are reserved for the one primary action and for dots.", "section": "colors" },
+      { "name": "The Engraved Rule", "body": "Anything at 22px or larger gets negative tracking (-0.4px or tighter). Large type is precision-machined, never airy.", "section": "typography" },
+      { "name": "The Mono-as-Data Rule", "body": "Monospace is for machine data only - code, paths, identifiers. It is never used for mood, branding, or emphasis.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Zero shadows, ever. If a surface needs separation, use a lighter tone or a hairline seam. If a layer needs arrival, use motion.", "section": "elevation" },
+      { "name": "The State Border Rule", "body": "Attention is carried by borders: the approval card wears a 1.5px amber ring (the only non-hairline border in the system); everything else keeps hairlines.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve color for state and action: cobalt = action, cyan = working, amber = needs you, coral = failed, mint = succeeded. Nothing else gets color.",
+      "Do keep every touch target at 44px or larger, and use the radius steps: 8 (small), 14 (medium), 20 (large), pill for chips.",
+      "Do build depth with tone and seam: Deep Watch to Panel Navy to Lifted Panel, hairline borders, no exceptions.",
+      "Do give arrivals motion: spring-up for the approval card, slide-in for banners, 380ms fade-and-rise entrances once per screen load.",
+      "Do keep the approval card one thumb-reach from the composer, wearing its 1.5px amber ring.",
+      "Do stop every ambient animation under prefers-reduced-motion / AccessibilityInfo.isReduceMotionEnabled().",
+      "Do tighten tracking on anything 22px or larger (-0.4px or tighter). Engraved, not airy.",
+      "Do pair every status color with a label or dot shape so state never depends on color alone."
+    ],
+    "donts": [
+      "Don't use drop shadows. If it looks like a card needs a shadow, the tone step or seam is wrong.",
+      "Don't let two things pulse on the same screen. One glow rule.",
+      "Don't reintroduce the AI-slop SaaS look: gradient accents, identical icon + title card grids, decorative glassmorphism, big-number hero metrics.",
+      "Don't build a chat-app clone: no messenger chrome, no bubble tails, no read receipts; the transcript is telemetry, not a conversation.",
+      "Don't build an admin dashboard: no data tables, no widget walls, no dense toolbars, no metric rows.",
+      "Don't tint sections, headers, or navigation with state colors, and never use gradient text.",
+      "Don't use monospace for mood. It is the voice of machine data only.",
+      "Don't fill a state surface with a solid saturated color - washes only (13% alpha or less), except the one primary action."
+    ]
+  }
+}
