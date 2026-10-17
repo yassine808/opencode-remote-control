@@ -5,6 +5,9 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -12,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Composer } from '@/components/composer';
+import { ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
 import { ReasoningBlock } from '@/components/reasoning';
@@ -21,7 +25,7 @@ import { ThemedView } from '@/components/themed-view';
 import { ToolBlock } from '@/components/tool-block';
 import { Glyph, PressableScale } from '@/components/ui';
 import { WorkingIndicator } from '@/components/working-indicator';
-import { Space } from '@/constants/theme';
+import { Radius, Space } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
 import { useConnection } from '@/lib/connection';
@@ -33,6 +37,8 @@ import type {
   GenericMessage,
   MessageInfo,
   MessagePart,
+  ModelInfo,
+  ModelRef,
   PermissionDecision,
   PermissionRequest,
   ReasoningPart,
@@ -161,11 +167,12 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
         ? generic.title
         : typeof generic.text === 'string'
           ? String(generic.text)
-          : message.type;
+          : null;
+    const slug = message.type.split('-').join(' ');
     push({
       kind: 'caption',
       id: message.id,
-      text: message.type === label ? label : `${message.type} — ${label}`,
+      text: label ? `${slug} — ${label}` : slug,
     });
   }
 
@@ -281,6 +288,11 @@ export default function SessionScreen() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(() => Date.now());
+  const [models, setModels] = useState<ModelInfo[] | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
   const listRef = useRef<FlatList<Row>>(null);
@@ -570,9 +582,88 @@ export default function SessionScreen() {
     [api, sessionID],
   );
 
+  const loadModels = useCallback(async () => {
+    const directory = sessionInfo?.location?.directory;
+    if (!api || !sessionID || !directory || models || modelsLoading) return;
+    setModelsLoading(true);
+    try {
+      const res = await api.models(directory);
+      setModels(res.data);
+    } catch (err) {
+      setExecError(describeError(err));
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [api, sessionID, sessionInfo?.location?.directory, models, modelsLoading]);
+
+  const openModelSheet = useCallback(() => {
+    setModelSheetOpen(true);
+    void loadModels();
+  }, [loadModels]);
+
+  const switchModel = useCallback(
+    async (model: ModelInfo, variant?: string) => {
+      if (!api || !sessionID) return;
+      const prev = sessionInfo?.model ?? null;
+      // `default` is the server's "no explicit effort" marker; treat it as none.
+      const prevVariant = prev?.variant && prev.variant !== 'default' ? prev.variant : null;
+      const nextVariant = variant && variant !== 'default' ? variant : null;
+      const same =
+        prev?.id === model.id &&
+        prev?.providerID === model.providerID &&
+        prevVariant === nextVariant;
+      if (same) return;
+      const ref: ModelRef = { id: model.id, providerID: model.providerID, variant: nextVariant };
+      setModelBusy(true);
+      // Optimistic: the pill reads the new model immediately; the next
+      // refetch and step.started event confirm it, and an error rolls back.
+      setSessionInfo((s) => (s ? { ...s, model: ref } : s));
+      try {
+        await api.switchModel(sessionID, {
+          id: ref.id,
+          providerID: ref.providerID,
+          ...(nextVariant ? { variant: nextVariant } : {}),
+        });
+      } catch (err) {
+        setSessionInfo((s) => (s ? { ...s, model: prev } : s));
+        setExecError(describeError(err));
+      } finally {
+        setModelBusy(false);
+      }
+    },
+    [api, sessionID, sessionInfo?.model],
+  );
+
   const rows = useMemo(() => buildRows(messages, running), [messages, running]);
   const todos = useMemo(() => extractTodos(messages), [messages]);
   const activity = useMemo(() => activityFor(rows), [rows]);
+
+  const currentModel = sessionInfo?.model ?? null;
+
+  const modelLabel = useMemo(() => {
+    if (!currentModel) return null;
+    const info = models?.find(
+      (m) => m.id === currentModel.id && m.providerID === currentModel.providerID,
+    );
+    const name = info?.name ?? currentModel.id.split('/').pop() ?? currentModel.id;
+    // `default` is the server's "no explicit effort" marker — don't render it.
+    const variant =
+      currentModel.variant && currentModel.variant !== 'default' ? currentModel.variant : null;
+    return variant ? `${name} · ${variant}` : name;
+  }, [currentModel, models]);
+
+  const todoSummary = useMemo(() => {
+    const total = todos.length;
+    const done = todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length;
+    const active = todos.some((t) => t.status === 'in_progress');
+    const allDone = total > 0 && done === total;
+    return {
+      total,
+      done,
+      color: allDone ? theme.positive : active ? theme.clay : theme.inkMuted,
+      soft: allDone ? theme.positiveSoft : active ? theme.claySoft : theme.inkWell,
+    };
+  }, [todos, theme]);
 
   if (ready && !api) return <Redirect href="/setup" />;
 
@@ -608,7 +699,32 @@ export default function SessionScreen() {
               {title}
             </ThemedText>
           </View>
-          <View style={{ width: 40 }} />
+          {todos.length > 0 ? (
+            <PressableScale
+              onPress={() => setTodosOpen((v) => !v)}
+              scaleTo={0.94}
+              hitSlop={10}
+              accessibilityLabel={`To-do list, ${todoSummary.done} of ${todoSummary.total} done`}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                height: 26,
+                paddingHorizontal: 9,
+                borderRadius: 13,
+                backgroundColor: todoSummary.soft,
+              }}>
+              <Glyph set="mci" name="format-list-checks" size={13} color={todoSummary.color} />
+              <ThemedText
+                type="caption"
+                weight="semibold"
+                style={{ color: todoSummary.color, fontVariant: ['tabular-nums'] }}>
+                {todoSummary.done}/{todoSummary.total}
+              </ThemedText>
+            </PressableScale>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </View>
       </View>
 
@@ -746,9 +862,55 @@ export default function SessionScreen() {
             onSend={() => void send()}
             onStop={() => void stop()}
             disabled={!api}
+            modelLabel={modelLabel}
+            onModelPress={openModelSheet}
           />
         </View>
       </KeyboardAvoidingView>
+
+      {/* to-do list — the header chip expands it over the transcript */}
+      {todosOpen && todos.length > 0 ? (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <Pressable
+            style={{ flex: 1 }}
+            onPress={() => setTodosOpen(false)}
+            accessibilityLabel="Close to-do list"
+          />
+          <View
+            style={{
+              position: 'absolute',
+              top: insets.top + 50,
+              right: 10,
+              width: 300,
+              maxWidth: '92%',
+              maxHeight: 420,
+              borderRadius: Radius.block,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.hairline,
+              backgroundColor: theme.surface,
+              overflow: 'hidden',
+              elevation: 8,
+              shadowColor: '#000',
+              shadowOpacity: 0.25,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 8 },
+            }}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <PlanCard todos={todos} />
+            </ScrollView>
+          </View>
+        </View>
+      ) : null}
+
+      <ModelSheet
+        visible={modelSheetOpen}
+        models={models}
+        loading={modelsLoading}
+        current={currentModel}
+        busy={modelBusy}
+        onClose={() => setModelSheetOpen(false)}
+        onPick={(model, variant) => void switchModel(model, variant)}
+      />
 
       {/* approvals — a sheet over everything, always in reach */}
       <PermissionCard

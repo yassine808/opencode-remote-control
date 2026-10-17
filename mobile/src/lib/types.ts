@@ -15,6 +15,31 @@ export interface ModelRef {
   variant?: string | null;
 }
 
+/** An effort level a model exposes (low…max, thinking…). */
+export interface ModelVariant {
+  id: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface ModelInfo {
+  /** The provider's own id — slashes allowed (`deepseek/deepseek-v4.1-flash`). */
+  id: string;
+  modelID: string;
+  providerID: string;
+  family?: string;
+  name: string;
+  variants: ModelVariant[];
+  status: 'alpha' | 'beta' | 'deprecated' | 'active';
+  enabled: boolean;
+  time?: { released?: number };
+  limit?: { context: number; output: number };
+}
+
+export interface ModelListResponse {
+  location: LocationPublicRef;
+  data: ModelInfo[];
+}
+
 export interface TokenUsage {
   input: number;
   output: number;

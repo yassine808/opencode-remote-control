@@ -3,6 +3,8 @@ import type {
   ActiveSessionsResponse,
   ListResponse,
   MessageInfo,
+  ModelListResponse,
+  ModelRef,
   PairingCode,
   PermissionDecision,
   PermissionRequest,
@@ -129,6 +131,21 @@ export class OpenCodeApi {
 
   session(id: string, signal?: AbortSignal) {
     return this.request<{ data: SessionInfo }>('GET', `/api/session/${id}`, undefined, signal);
+  }
+
+  /** Every model the server knows for one project directory — the picker's catalog. */
+  models(directory: string, signal?: AbortSignal) {
+    return this.request<ModelListResponse>(
+      'GET',
+      `/api/model?location%5Bdirectory%5D=${encodeURIComponent(directory)}`,
+      undefined,
+      signal,
+    );
+  }
+
+  /** Switch the model — and its effort variant, when it has one — for subsequent turns. */
+  switchModel(sessionID: string, model: ModelRef, signal?: AbortSignal) {
+    return this.request<void>('POST', `/api/session/${sessionID}/model`, { model }, signal);
   }
 
   activeSessions(signal?: AbortSignal) {
