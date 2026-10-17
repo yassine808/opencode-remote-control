@@ -2,7 +2,15 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -45,8 +53,9 @@ function parsePairingInput(raw: string): ParsedPairing | null {
 export default function SetupScreen() {
   const theme = useTheme();
   const { connect } = useConnection();
+  const isWeb = Platform.OS === 'web';
   const [permission, requestPermission] = useCameraPermissions();
-  const [mode, setMode] = useState<'scan' | 'manual'>('scan');
+  const [mode, setMode] = useState<'scan' | 'manual'>(isWeb ? 'manual' : 'scan');
   const [manualText, setManualText] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -186,19 +195,23 @@ export default function SetupScreen() {
           </ThemedText>
         ) : (
           <ThemedText type="small" themeColor="textSecondary">
-            Then scan the QR code it prints.
+            {isWeb
+              ? 'Then paste the link it prints below.'
+              : 'Then scan the QR code it prints.'}
           </ThemedText>
         )}
-        <Pressable
-          onPress={() => {
-            setMode(mode === 'scan' ? 'manual' : 'scan');
-            setError(null);
-            scannedRef.current = false;
-          }}>
-          <ThemedText type="smallBold" style={styles.linkText}>
-            {mode === 'scan' ? 'Enter link manually instead' : 'Scan QR instead'}
-          </ThemedText>
-        </Pressable>
+        {!isWeb && (
+          <Pressable
+            onPress={() => {
+              setMode(mode === 'scan' ? 'manual' : 'scan');
+              setError(null);
+              scannedRef.current = false;
+            }}>
+            <ThemedText type="smallBold" style={styles.linkText}>
+              {mode === 'scan' ? 'Enter link manually instead' : 'Scan QR instead'}
+            </ThemedText>
+          </Pressable>
+        )}
       </View>
     </ThemedView>
   );
