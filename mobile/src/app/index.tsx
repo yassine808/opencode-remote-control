@@ -1,19 +1,44 @@
+/**
+ * The launcher: every project, with its conversations nested underneath.
+ * Tap a project to expand it; the freshest one arrives already open, so
+ * continuing the last conversation stays one tap.
+ *
+ * The invisible parts are load-bearing too: an SSE stream keeps the list
+ * fresh while you are not looking, a 15s poll as a safety net, and a
+ * debounced reload for bursts of events. Errors render inline where the
+ * list would be — on a phone, away from home, "PC unreachable" IS the
+ * content.
+ */
+
 import { Redirect, router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { RefreshControl, SectionList, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  AppState,
+  Easing,
+  FlatList,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { SessionCard } from '@/components/session-card';
+import { BrandWordmark } from '@/components/brand';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Banner, Button, Entrance, Pill, Skeleton } from '@/components/ui';
-import { CodeBlock } from '@/components/rich-text';
-import { MaxContentWidth, Radius, Spacing } from '@/constants/theme';
+import { Glyph, PressableScale, StatusDot, useReduceMotion } from '@/components/ui';
+import { Fonts, Motion } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { useConnection } from '@/lib/connection';
 import { runEventStream, type StreamStatus } from '@/lib/events';
+import { basename } from '@/lib/paths';
+import { loadRecentSessions, type RecentSession } from '@/lib/storage';
 import type { SessionInfo } from '@/lib/types';
 
 const LIST_REFRESH_EVENTS = new Set([
@@ -27,50 +52,212 @@ const LIST_REFRESH_EVENTS = new Set([
   'session.usage.updated',
 ]);
 
-type Group = 'needs' | 'running' | 'recent';
+// ---------- grouping ----------
 
-export default function SessionsScreen() {
+interface ProjectGroup {
+  id: string;
+  name: string;
+  sessions: SessionInfo[];
+  /** Newest update in the group — the freshest group opens by default. */
+  freshest: number;
+}
+
+/**
+ * Sessions grouped by their project directory; the group's name is the
+ * folder's, so "search covers both" falls out of matching the directory
+ * path as well as the title.
+ */
+function buildGroups(sessions: SessionInfo[], query: string): ProjectGroup[] {
+  const q = query.trim().toLowerCase();
+  const map = new Map<string, ProjectGroup>();
+  for (const s of sessions) {
+    const directory = s.location?.directory || 'Other';
+    const name = basename(directory) || directory;
+    const title = (s.title ?? '').toLowerCase();
+    if (q && !title.includes(q) && !directory.toLowerCase().includes(q)) continue;
+    let group = map.get(directory);
+    if (!group) {
+      group = { id: directory, name, sessions: [], freshest: 0 };
+      map.set(directory, group);
+    }
+    group.sessions.push(s);
+    group.freshest = Math.max(group.freshest, s.time?.updated ?? 0);
+  }
+  const groups = [...map.values()];
+  for (const g of groups) {
+    g.sessions.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+  }
+  groups.sort((a, b) => b.freshest - a.freshest);
+  return groups;
+}
+
+type Row =
+  | { kind: 'section'; key: string; title: string }
+  | { kind: 'project'; key: string; group: ProjectGroup; expanded: boolean; last: boolean }
+  | {
+      kind: 'session';
+      key: string;
+      id: string;
+      title: string;
+      /** Project-name caption; Recent rows come from different projects. */
+      hint?: string;
+      /** Nested rows indent under their project; top-level rows don't. */
+      indent?: boolean;
+      last: boolean;
+    };
+
+// ---------- rows ----------
+
+/**
+ * Disclosure row: chevron turns a quarter clockwise when the group opens —
+ * the same gesture their List performs, ported.
+ */
+function ProjectRow({
+  group,
+  expanded,
+  last,
+  onToggle,
+}: {
+  group: ProjectGroup;
+  expanded: boolean;
+  last: boolean;
+  onToggle: () => void;
+}) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const rotation = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (reduce) {
+      rotation.setValue(expanded ? 1 : 0);
+      return;
+    }
+    Animated.timing(rotation, {
+      toValue: expanded ? 1 : 0,
+      duration: Motion.settle * 1000,
+      easing: Easing.bezier(...Motion.curve),
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [expanded, reduce, rotation]);
+
+  return (
+    <View>
+      <Pressable
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={`${group.name}, ${expanded ? 'expanded' : 'collapsed'}, ${group.sessions.length} sessions`}
+        style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.inkControl }]}>
+        <Animated.View
+          style={{
+            transform: [
+              {
+                rotate: rotation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0deg', '90deg'],
+                }),
+              },
+            ],
+          }}>
+          <Glyph name="chevron-forward" size={13} color={theme.inkMuted} />
+        </Animated.View>
+        <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
+          {group.name}
+        </ThemedText>
+        {!expanded && group.sessions.length > 0 ? (
+          <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+            {group.sessions.length}
+          </ThemedText>
+        ) : null}
+      </Pressable>
+      {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
+    </View>
+  );
+}
+
+/** Section label — "Recent", "Projects". A list row so it scrolls with them. */
+function SectionHead({ title }: { title: string }) {
+  const theme = useTheme();
+  return (
+    <ThemedText type="footnote" style={[styles.sectionHead, { color: theme.inkMuted }]}>
+      {title}
+    </ThemedText>
+  );
+}
+
+/**
+ * One conversation row. Nested rows lean on the project row above for
+ * context; Recent rows carry the project as a quiet caption because their
+ * neighbours come from different projects.
+ */
+function SessionRow({
+  title,
+  hint,
+  indent,
+  last,
+  onPress,
+}: {
+  title: string;
+  hint?: string;
+  indent?: boolean;
+  last: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={hint ? `${title}, ${hint}` : title}
+        style={({ pressed }) => [
+          styles.row,
+          indent && styles.sessionRow,
+          pressed && { backgroundColor: theme.inkControl },
+        ]}>
+        <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
+          {title}
+        </ThemedText>
+        {hint ? (
+          <ThemedText type="caption" numberOfLines={1} style={[styles.rowHint, { color: theme.inkFaint }]}>
+            {hint}
+          </ThemedText>
+        ) : null}
+        <Glyph name="chevron-forward" size={12} color={theme.inkFaint} />
+      </Pressable>
+      {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
+    </View>
+  );
+}
+
+// ---------- screen ----------
+
+export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { ready, api, disconnect } = useConnection();
+
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
-  const [active, setActive] = useState<Record<string, { type: string }>>({});
-  const [approvals, setApprovals] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<StreamStatus>('disconnected');
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
+  const [search, setSearch] = useState('');
+  /** Disclosure the user has set by hand; anything absent falls back to the
+   *  default: only the freshest project open. */
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  /** Conversations opened from this device, newest first (local history). */
+  const [recents, setRecents] = useState<RecentSession[]>([]);
+
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // The staggered entrance plays once, on the first list that appears.
-  const introPlayed = useRef(false);
 
   const load = useCallback(
     async (opts: { silent?: boolean } = {}) => {
       if (!api) return;
       if (!opts.silent) setRefreshing(true);
       try {
-        const [list, act] = await Promise.all([api.sessions(50), api.activeSessions()]);
-        // Approvals are location-scoped on the server, so gather per project directory.
-        const directories = Array.from(
-          new Set(
-            list.data
-              .map((s) => s.location?.directory)
-              .filter((d): d is string => typeof d === 'string' && d.length > 0),
-          ),
+        const list = await api.sessions(50);
+        setSessions(
+          [...list.data].sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0)),
         );
-        const perms = await Promise.all(directories.map((dir) => api.permissionRequestsAt(dir)));
-        const sorted = [...list.data].sort((a, b) => {
-          const aRun = act.data[a.id] ? 1 : 0;
-          const bRun = act.data[b.id] ? 1 : 0;
-          if (aRun !== bRun) return bRun - aRun;
-          return (b.time?.updated ?? 0) - (a.time?.updated ?? 0);
-        });
-        setSessions(sorted);
-        setActive(act.data);
-        const counts: Record<string, number> = {};
-        for (const res of perms) {
-          for (const p of res.data) counts[p.sessionID] = (counts[p.sessionID] ?? 0) + 1;
-        }
-        setApprovals(counts);
         setError(null);
       } catch (err) {
         setError(describeError(err));
@@ -81,6 +268,10 @@ export default function SessionsScreen() {
     [api],
   );
 
+  const loadRecents = useCallback(async () => {
+    setRecents(await loadRecentSessions());
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (!api) return;
@@ -88,6 +279,7 @@ export default function SessionsScreen() {
       const ctrl = new AbortController();
 
       void load();
+      void loadRecents();
 
       const scheduleReload = () => {
         if (reloadTimer.current) return;
@@ -124,33 +316,84 @@ export default function SessionsScreen() {
           reloadTimer.current = null;
         }
       };
-    }, [api, load]),
+    }, [api, load, loadRecents]),
   );
 
-  const sections = useMemo(() => {
-    const buckets: Record<Group, SessionInfo[]> = { needs: [], running: [], recent: [] };
-    for (const s of sessions ?? []) {
-      const group: Group = (approvals[s.id] ?? 0) > 0 ? 'needs' : active[s.id] ? 'running' : 'recent';
-      buckets[group].push(s);
-    }
-    const defs: { key: Group; title: string }[] = [
-      { key: 'needs', title: 'Needs your approval' },
-      { key: 'running', title: 'Running' },
-      { key: 'recent', title: 'Recent' },
-    ];
-    return defs
-      .filter((d) => buckets[d.key].length > 0)
-      .map((d) => ({ key: d.key, title: d.title, data: buckets[d.key] }));
-  }, [sessions, active, approvals]);
+  // Returning to the app is the moment a session started elsewhere (the
+  // CLI on the PC) should already be in the list, without a pull.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (phase) => {
+      if (phase === 'active') {
+        void load({ silent: true });
+        void loadRecents();
+      }
+    });
+    return () => sub.remove();
+  }, [load, loadRecents]);
 
-  const order = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const sec of sections) for (const item of sec.data) map.set(item.id, map.size);
+  const groups = useMemo(() => buildGroups(sessions ?? [], search), [sessions, search]);
+
+  const defaultExpandedID = groups[0]?.id ?? null;
+  const isExpanded = useCallback(
+    (group: ProjectGroup) => {
+      // A search result that stayed folded would be a result withheld.
+      if (search.trim()) return true;
+      return toggled[group.id] ?? group.id === defaultExpandedID;
+    },
+    [search, toggled, defaultExpandedID],
+  );
+
+  const searching = search.trim().length > 0;
+
+  const sessionByID = useMemo(() => {
+    const map = new Map<string, SessionInfo>();
+    for (const s of sessions ?? []) map.set(s.id, s);
     return map;
-  }, [sections]);
+  }, [sessions]);
 
-  const needsCount = sections.find((s) => s.key === 'needs')?.data.length ?? 0;
-  const runningCount = sections.find((s) => s.key === 'running')?.data.length ?? 0;
+  const rows = useMemo(() => {
+    const out: Row[] = [];
+
+    // Recents sit above the fold — continuing the last conversation stays
+    // the fastest path; a search narrows the list to matches only.
+    if (!searching && recents.length > 0) {
+      out.push({ kind: 'section', key: 'sec:recent', title: 'Recent' });
+      recents.forEach((entry, i) => {
+        const fresh = sessionByID.get(entry.id);
+        const directory = fresh?.location?.directory ?? entry.directory ?? '';
+        out.push({
+          kind: 'session',
+          key: `recent:${entry.id}`,
+          id: entry.id,
+          title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
+          hint: basename(directory) || undefined,
+          last: i === recents.length - 1,
+        });
+      });
+    }
+
+    if (groups.length > 0) {
+      out.push({ kind: 'section', key: 'sec:projects', title: searching ? 'Results' : 'Projects' });
+      for (const group of groups) {
+        const expanded = isExpanded(group);
+        const members = expanded ? group.sessions.length : 0;
+        out.push({ kind: 'project', key: `p:${group.id}`, group, expanded, last: members === 0 });
+        if (expanded) {
+          group.sessions.forEach((session, i) => {
+            out.push({
+              kind: 'session',
+              key: session.id,
+              id: session.id,
+              title: session.title?.trim() || 'Untitled session',
+              indent: true,
+              last: i === group.sessions.length - 1,
+            });
+          });
+        }
+      }
+    }
+    return out;
+  }, [groups, isExpanded, recents, searching, sessionByID]);
 
   const unpair = useCallback(async () => {
     const ok = await confirmAction({
@@ -165,100 +408,142 @@ export default function SessionsScreen() {
   if (!ready) return <ThemedView style={styles.screen} />;
   if (!api) return <Redirect href="/setup" />;
 
-  const summary =
-    needsCount > 0
-      ? `${needsCount} ${needsCount === 1 ? 'session needs' : 'sessions need'} you`
-      : runningCount > 0
-        ? `${runningCount} running`
-        : sessions && sessions.length > 0
-          ? 'All quiet'
-          : ' ';
-
-  const live =
+  const dotColor =
     streamStatus === 'connected'
-      ? { label: 'Live', color: theme.success, soft: theme.successSoft, pulse: true }
+      ? theme.positive
       : streamStatus === 'connecting'
-        ? { label: 'Connecting', color: theme.textSecondary, soft: theme.backgroundSelected, pulse: true }
-        : { label: 'Offline', color: theme.warn, soft: theme.warnSoft, pulse: false };
+        ? theme.inkFaint
+        : theme.negative;
+
+  const dotLabel =
+    streamStatus === 'connected'
+      ? 'PC connected'
+      : streamStatus === 'connecting'
+        ? 'Checking'
+        : 'PC unreachable';
 
   return (
     <ThemedView style={styles.screen}>
-      <View style={[styles.column, { paddingTop: insets.top + Spacing.three }]}>
-        <View style={styles.headerRow}>
-          <Pill label={live.label} color={live.color} soft={live.soft} dot pulse={live.pulse} />
-          <Button label="Unpair" variant="ghost" compact onPress={() => void unpair()} />
+      {/* nav — the wordmark, a status dot, nothing else */}
+      <View style={{ paddingTop: insets.top }}>
+        <View style={styles.navBar}>
+          <BrandWordmark height={15} color={theme.ink} />
         </View>
-        <ThemedText type="heading" accessibilityRole="header" style={styles.title}>
-          Sessions
-        </ThemedText>
-        <ThemedText type="default" themeColor={needsCount > 0 ? 'warn' : 'textSecondary'} style={styles.summary}>
-          {summary}
-        </ThemedText>
+        <View style={[styles.dot, { top: insets.top }]}>
+          <PressableScale
+            onPress={() => void load({ silent: true })}
+            onLongPress={() => void unpair()}
+            accessibilityLabel={dotLabel}
+            accessibilityHint="Long press to unpair">
+            <StatusDot color={dotColor} size={10} />
+          </PressableScale>
+        </View>
       </View>
 
-      {streamStatus === 'disconnected' && sessions !== null && <Banner tone="warn">Live updates paused. Reconnecting…</Banner>}
-      {error && (
-        <Banner tone="danger" actionLabel="Retry" onAction={() => void load()}>
-          {error}
-        </Banner>
-      )}
+      {/* searchable — one field, debounced upstream by local filtering */}
+      <View style={styles.searchWrap}>
+        <View style={[styles.search, { backgroundColor: theme.inkControl }]}>
+          <Glyph name="search" size={16} color={theme.inkFaint} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search projects and sessions"
+            placeholderTextColor={theme.inkFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Search projects and sessions"
+            style={[styles.searchInput, { color: theme.ink }]}
+          />
+          {search.length > 0 ? (
+            <PressableScale
+              onPress={() => setSearch('')}
+              hitSlop={8}
+              accessibilityLabel="Clear search"
+              scaleTo={0.9}>
+              <Glyph name="close-circle-outline" size={16} color={theme.inkFaint} />
+            </PressableScale>
+          ) : null}
+        </View>
+      </View>
 
-      {sessions === null ? (
-        <View style={[styles.column, styles.skeletons]}>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} style={styles.skeletonCard} />
-          ))}
+      {sessions === null && !error ? (
+        <View style={styles.center}>
+          <View style={styles.centerRow}>
+            <ActivityIndicator size="small" color={theme.inkMuted} />
+            <ThemedText type="callout" style={{ color: theme.inkMuted }}>
+              Reaching your PC…
+            </ThemedText>
+          </View>
         </View>
       ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => item.id}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + Spacing.five }]}
+        <FlatList
+          data={rows}
+          keyExtractor={(row) => row.key}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.listContent,
+            { paddingBottom: insets.bottom + 24 },
+          ]}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={theme.text} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void load()}
+              tintColor={theme.inkMuted}
+              colors={[theme.accent]}
+            />
           }
-          renderSectionHeader={({ section }) => (
-            <View style={styles.sectionHead}>
-              <ThemedText
-                type="smallBold"
-                themeColor={section.key === 'needs' ? 'warn' : 'textSecondary'}>
-                {section.title}
-              </ThemedText>
-              <ThemedText type="caption" themeColor="textTertiary">
-                {section.data.length}
-              </ThemedText>
-            </View>
-          )}
-          renderItem={({ item }) => {
-            const i = order.get(item.id) ?? 0;
-            return (
-              <Entrance enabled={!introPlayed.current && i < 8} delay={i * 55} style={styles.item}>
-                <SessionCard
-                  session={item}
-                  running={Boolean(active[item.id])}
-                  pending={approvals[item.id] ?? 0}
-                  onPress={() => router.push({ pathname: '/session/[id]', params: { id: item.id } })}
-                />
-              </Entrance>
-            );
-          }}
-          onLayout={() => {
-            // First paint done: later refreshes and scrolling won't replay the intro.
-            setTimeout(() => {
-              introPlayed.current = true;
-            }, 900);
-          }}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <ThemedText type="subtitle">No sessions yet</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-                Open a session in OpenCode on your PC. It will show up here. Pull down to refresh.
-              </ThemedText>
-              <View style={styles.emptyCode}>
-                <CodeBlock text="opencode" lang="PC terminal" />
+          ListHeaderComponent={
+            error ? (
+              <View style={styles.errorRow}>
+                <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
+                <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
+                  {error}
+                </ThemedText>
               </View>
-            </View>
+            ) : undefined
+          }
+          renderItem={({ item }) =>
+            item.kind === 'section' ? (
+              <SectionHead title={item.title} />
+            ) : item.kind === 'project' ? (
+              <ProjectRow
+                group={item.group}
+                expanded={item.expanded}
+                last={item.last}
+                onToggle={() =>
+                  setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
+                }
+              />
+            ) : (
+              <SessionRow
+                title={item.title}
+                hint={item.hint}
+                indent={item.indent}
+                last={item.last}
+                onPress={() =>
+                  router.push({ pathname: '/session/[id]', params: { id: item.id } })
+                }
+              />
+            )
+          }
+          ListEmptyComponent={
+            !error ? (
+              searching ? (
+                <ThemedText type="body" style={[styles.emptyText, { color: theme.inkMuted }]}>
+                  No matching projects or sessions
+                </ThemedText>
+              ) : (
+                <View style={styles.empty}>
+                  <ThemedText type="body" style={{ color: theme.inkMuted }}>
+                    No sessions yet
+                  </ThemedText>
+                  <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+                    Start one in OpenCode on your PC — it shows up here.
+                  </ThemedText>
+                </View>
+              )
+            ) : undefined
           }
         />
       )}
@@ -268,29 +553,48 @@ export default function SessionsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  column: { width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center', paddingHorizontal: Spacing.three },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.two },
-  title: { marginTop: Spacing.one },
-  summary: { marginTop: 2, marginBottom: Spacing.two },
-  listContent: {
-    width: '100%',
-    maxWidth: MaxContentWidth,
-    alignSelf: 'center',
-    paddingHorizontal: Spacing.three,
-    paddingTop: Spacing.two,
-    flexGrow: 1,
-  },
-  sectionHead: {
+  navBar: { height: 44, alignItems: 'center', justifyContent: 'center' },
+  dot: { position: 'absolute', right: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+  search: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
+    gap: 6,
+    height: 36,
+    borderRadius: 10,
+    paddingHorizontal: 8,
   },
-  item: { marginBottom: Spacing.two + 2 },
-  skeletons: { gap: Spacing.two + 2, paddingTop: Spacing.four },
-  skeletonCard: { height: 98, borderRadius: Radius.large },
-  empty: { paddingTop: Spacing.six, gap: Spacing.two, alignItems: 'flex-start' },
-  emptyText: { maxWidth: 360 },
-  emptyCode: { alignSelf: 'stretch', marginTop: Spacing.three },
+  searchInput: {
+    flex: 1,
+    fontFamily: Fonts.regular,
+    fontSize: 17,
+    lineHeight: 22,
+    padding: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+  },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  listContent: { flexGrow: 1, width: '100%', maxWidth: 560, alignSelf: 'center' },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  errorText: { flex: 1 },
+  sectionHead: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 6 },
+  row: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  sessionRow: { paddingLeft: 16 + 22 },
+  rowText: { flex: 1 },
+  rowHint: { maxWidth: 160 },
+  separator: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
+  empty: { paddingHorizontal: 16, paddingTop: 2, gap: 4 },
+  emptyText: { paddingHorizontal: 16, paddingTop: 2 },
 });

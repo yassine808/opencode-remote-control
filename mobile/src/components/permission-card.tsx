@@ -1,18 +1,69 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
+/**
+ * "The agent wants to do X — allow?"
+ *
+ * A sheet rather than an alert, deliberately: the choice relates to an
+ * intentional action, and the card carries content the user has to read —
+ * the exact command, its scope, what "always" would grant.
+ *
+ * The card varies with risk. A git status and an rm -rf must not look the
+ * same: an identical card every time optimises for habituation, and varying
+ * presentation by risk is the empirically supported counter.
+ */
+
+import { useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Button, StatusDot, useReduceMotion } from '@/components/ui';
-import { Radius, Spacing } from '@/constants/theme';
+import { Button, Glyph } from '@/components/ui';
+import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { PermissionDecision, PermissionRequest } from '@/lib/types';
 
-const NATIVE = Platform.OS !== 'web';
-
 /**
- * Docked above the composer so the decision is always one thumb-reach away.
- * Springs up when a request arrives — the one interruption the UI is allowed to make.
+ * Heuristic risk read, mirroring the companion's: destructive shell,
+ * anything touching the wider system, or an edit outside what was asked.
  */
+const DANGER = [
+  /\brm\s+(-[a-z]*[rf][a-z]*\s+)+/i,
+  /\bsudo\b/i,
+  /\b(mkfs|dd|shutdown|reboot|diskpart|format)\b/i,
+  /\bchmod\s+-R\b/i,
+  /\bchown\s+-R\b/i,
+  /\bgit\s+push\s+(-f|--force)/i,
+  /\bkill(all)?\s+-9\b/i,
+  /\bcurl\b.*\|\s*(sh|bash)\b/i,
+  /(>\s*\/dev\/|>\s*[A-Z]:\\)/i,
+  /\bmv\s+\S+\s+\/(etc|usr|bin|sbin)\b/i,
+];
+
+function isHighRisk(request: PermissionRequest): boolean {
+  if (request.action === 'external_directory') return true;
+  return request.resources.some((r) => DANGER.some((re) => re.test(r)));
+}
+
+function titleFor(request: PermissionRequest, high: boolean): string {
+  switch (request.action) {
+    case 'bash':
+      return high ? 'Run a risky command?' : 'Run a command?';
+    case 'edit':
+      return 'Edit files?';
+    case 'write':
+      return 'Write files?';
+    case 'patch':
+      return 'Apply a patch?';
+    case 'read':
+      return 'Read a file?';
+    case 'external_directory':
+      return 'Reach outside the project?';
+    case 'webfetch':
+    case 'websearch':
+      return 'Access the network?';
+    default:
+      return `${request.action.charAt(0).toUpperCase()}${request.action.slice(1)}?`;
+  }
+}
+
 export function PermissionCard({
   request,
   index,
@@ -20,93 +71,134 @@ export function PermissionCard({
   busy,
   onDecide,
 }: {
-  request: PermissionRequest;
+  request: PermissionRequest | null;
   index: number;
   total: number;
   busy: boolean;
   onDecide: (decision: PermissionDecision) => void;
 }) {
   const theme = useTheme();
-  const reduce = useReduceMotion();
-  const v = useRef(new Animated.Value(reduce ? 1 : 0)).current;
+  const insets = useSafeAreaInsets();
+  const [confirmAlways, setConfirmAlways] = useState(false);
 
-  useEffect(() => {
-    if (reduce) return;
-    v.setValue(0);
-    Animated.spring(v, { toValue: 1, useNativeDriver: NATIVE, speed: 14, bounciness: 7 }).start();
-  }, [request.id, reduce, v]);
+  if (!request) return null;
 
-  const resources = request.resources ?? [];
-  const shown = resources.slice(0, 2);
+  const high = isHighRisk(request);
+  const queued = Math.max(0, total - index - 1);
+  const scope = request.save?.length ? request.save : request.resources;
+
+  const caution50 = `${theme.caution}80`;
+
+  const close = () => setConfirmAlways(false);
 
   return (
-    <Animated.View
-      accessibilityLiveRegion="assertive"
-      style={[
-        styles.card,
-        {
-          backgroundColor: theme.backgroundElement,
-          borderColor: theme.warnSolid,
-          opacity: v.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 1, 1] }),
-          transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }],
-        },
-      ]}>
-      <View style={styles.head}>
-        <StatusDot color={theme.warnSolid} pulse size={8} />
-        <ThemedText type="smallBold" style={styles.title}>
-          Approval needed
-        </ThemedText>
-        {total > 1 ? (
-          <ThemedText type="caption" themeColor="textSecondary">
-            {index + 1} of {total}
-          </ThemedText>
-        ) : null}
-      </View>
-
-      <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
-        {request.message || `OpenCode wants to run: ${request.action}`}
-      </ThemedText>
-
-      {shown.length > 0 && (
-        <View style={styles.resources}>
-          {shown.map((r) => (
-            <View key={r} style={[styles.resource, { backgroundColor: theme.code, borderColor: theme.border }]}>
-              <ThemedText type="code" numberOfLines={1}>
-                {r}
-              </ThemedText>
-            </View>
-          ))}
-          {resources.length > shown.length ? (
-            <ThemedText type="caption" themeColor="textSecondary">
-              +{resources.length - shown.length} more
+    <Modal visible transparent animationType="fade" onRequestClose={close}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View
+          style={{
+            backgroundColor: theme.canvas,
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            padding: 20,
+            paddingBottom: 20 + insets.bottom,
+            gap: 16,
+          }}>
+          {/* header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {high ? (
+              <Glyph name="warning" size={17} color={theme.caution} />
+            ) : (
+              <Glyph name="hand-left-outline" size={17} color={theme.inkMuted} />
+            )}
+            <ThemedText type="headline" style={{ color: theme.ink, flexShrink: 1 }}>
+              {titleFor(request, high)}
             </ThemedText>
-          ) : null}
-        </View>
-      )}
+            <View style={{ flex: 1 }} />
+            {queued > 0 ? (
+              <ThemedText type="caption" style={{ color: theme.inkMuted }}>
+                {queued} more waiting
+              </ThemedText>
+            ) : null}
+          </View>
 
-      <View style={styles.actions}>
-        <Button label="Reject" variant="danger" disabled={busy} onPress={() => onDecide('reject')} style={styles.flex} />
-        <Button label="Always" disabled={busy} onPress={() => onDecide('always')} style={styles.flex} />
-        <Button label="Allow once" variant="primary" disabled={busy} onPress={() => onDecide('once')} style={styles.flexWide} />
+          {confirmAlways ? (
+            <ThemedText type="callout" style={{ color: theme.ink }}>
+              Allow every {request.action} like this until OpenCode restarts?
+            </ThemedText>
+          ) : (
+            <>
+              {/* the exact ask — mono, never wrapped */}
+              <View
+                style={{
+                  backgroundColor: theme.surface,
+                  borderRadius: 12,
+                  borderWidth: high ? 1.5 : 1,
+                  borderColor: high ? caution50 : theme.hairline,
+                  overflow: 'hidden',
+                }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ padding: 14 }}>
+                  <ThemedText
+                    type="code"
+                    style={{ color: theme.ink, fontSize: 15, lineHeight: 20 }}>
+                    {request.resources.join('\n')}
+                  </ThemedText>
+                </ScrollView>
+              </View>
+
+              <ThemedText type="footnote" style={{ color: theme.inkMuted }}>
+                “Always” allows {scope.join(', ')} for the rest of this session.
+              </ThemedText>
+            </>
+          )}
+
+          {/* actions */}
+          {!confirmAlways ? (
+            <>
+              <Button
+                variant="primary"
+                busy={busy}
+                disabled={busy}
+                onPress={() => onDecide('once')}>
+                Allow Once
+              </Button>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => onDecide('reject')}
+                  style={{ flex: 1 }}>
+                  Reject
+                </Button>
+                {!high ? (
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onPress={() => setConfirmAlways(true)}
+                    style={{ flex: 1 }}>
+                    Always
+                  </Button>
+                ) : null}
+              </View>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="primary"
+                busy={busy}
+                disabled={busy}
+                onPress={() => onDecide('always')}>
+                Yes, allow always
+              </Button>
+              <Button variant="secondary" disabled={busy} onPress={close}>
+                Back
+              </Button>
+            </>
+          )}
+        </View>
       </View>
-    </Animated.View>
+    </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: Spacing.three,
-    marginBottom: Spacing.two,
-    padding: Spacing.three,
-    gap: Spacing.two + 2,
-    borderRadius: Radius.large,
-    borderWidth: 1.5,
-  },
-  head: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two + 2 },
-  title: { flex: 1 },
-  resources: { gap: 6 },
-  resource: { borderRadius: Radius.small, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 10, paddingVertical: 6 },
-  actions: { flexDirection: 'row', gap: Spacing.two, marginTop: 2 },
-  flex: { flex: 1, minWidth: 0 },
-  flexWide: { flex: 1.5, minWidth: 0 },
-});

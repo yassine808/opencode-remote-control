@@ -1,47 +1,36 @@
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  StyleSheet,
-  TextInput,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Composer } from '@/components/composer';
 import { PermissionCard } from '@/components/permission-card';
+import { PlanCard, type TodoItem } from '@/components/plan-card';
+import { ReasoningBlock } from '@/components/reasoning';
 import { RichText } from '@/components/rich-text';
-import { basename } from '@/components/session-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ToolBlock } from '@/components/tool-block';
-import {
-  ArrowUp,
-  BackGlyph,
-  Banner,
-  Chevron,
-  IconButton,
-  PressableScale,
-  ProgressSweep,
-  Skeleton,
-  TypingDots,
-} from '@/components/ui';
-import { MaxContentWidth, Radius, Spacing, Touch } from '@/constants/theme';
+import { Glyph, PressableScale } from '@/components/ui';
+import { WorkingIndicator } from '@/components/working-indicator';
+import { Space } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
 import { useConnection } from '@/lib/connection';
 import { runEventStream, type StreamStatus } from '@/lib/events';
+import { rememberRecentSession } from '@/lib/storage';
 import type {
   AssistantMessage,
   ExecutionEventData,
   GenericMessage,
-  IdleMessage,
   MessageInfo,
   MessagePart,
   PermissionDecision,
@@ -60,7 +49,6 @@ import type {
   UserMessage,
 } from '@/lib/types';
 
-type Theme = ReturnType<typeof useTheme>;
 type TaggedPart = MessagePart & { __ordinal?: number };
 
 // ---------- streaming merge helpers ----------
@@ -98,148 +86,180 @@ function upsertPart(
   });
 }
 
-// ---------- message rendering ----------
+// ---------- rows: parts, flattened across messages ----------
 
-function ReasoningBlock({ text, theme }: { text: string; theme: Theme }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!text) return null;
-  return (
-    <PressableScale
-      onPress={() => setExpanded((v) => !v)}
-      scaleTo={0.99}
-      accessibilityLabel={expanded ? 'Collapse reasoning' : 'Expand reasoning'}
-      accessibilityState={{ expanded }}
-      style={[styles.reasoning, { borderLeftColor: theme.border }]}>
-      <View style={styles.reasoningHead}>
-        <ThemedText type="caption" themeColor="textSecondary" style={styles.semibold}>
-          Reasoning
-        </ThemedText>
-        <Chevron open={expanded} color={theme.textTertiary} size={6} />
-      </View>
-      <ThemedText
-        type="small"
-        themeColor="textSecondary"
-        numberOfLines={expanded ? undefined : 2}
-        style={styles.reasoningText}>
-        {text}
-      </ThemedText>
-    </PressableScale>
-  );
-}
+/** `Omit` over a union collapses it, so build rows without padTop and add it on push. */
+type RowBase =
+  | { kind: 'user'; id: string; text: string }
+  | { kind: 'text'; id: string; text: string }
+  | { kind: 'reasoning'; id: string; text: string; active: boolean }
+  | { kind: 'tool'; id: string; part: ToolPart }
+  | { kind: 'error'; id: string; text: string }
+  | { kind: 'caption'; id: string; text: string };
 
-function MessageRow({ message, theme }: { message: MessageInfo; theme: Theme }) {
-  if (message.type === 'user') {
-    const text = String((message as UserMessage).text ?? '');
-    return (
-      <View style={[styles.userBubble, { backgroundColor: theme.accent }]}>
-        <ThemedText selectable style={{ color: theme.onAccent }}>
-          {text}
-        </ThemedText>
-      </View>
-    );
-  }
+type Row = RowBase & { padTop: number };
 
-  if (message.type === 'assistant') {
-    const msg = message as AssistantMessage;
-    const parts = (msg.content ?? []) as TaggedPart[];
-    if (parts.length === 0 && !msg.error) {
-      return (
-        <View style={styles.assistantWrap}>
-          <TypingDots color={theme.textTertiary} />
-        </View>
-      );
+/**
+ * Flatten messages into transcript rows.
+ *
+ * No divider lines anywhere: the spacing ladder is the only thing telling a
+ * reader where a turn ended — 40pt between turns, 12pt between parts, and
+ * that >3x ratio is load-bearing. See the design notes.
+ */
+function buildRows(messages: MessageInfo[], running: boolean): Row[] {
+  const rows: Row[] = [];
+
+  const push = (row: RowBase) => {
+    const prev = rows[rows.length - 1];
+    const padTop = rows.length === 0 ? 0 : row.kind === 'user' || prev?.kind === 'user' ? 40 : 12;
+    rows.push({ ...row, padTop });
+  };
+
+  for (const message of messages) {
+    if (message.type === 'user') {
+      const text = String((message as UserMessage).text ?? '');
+      if (text) push({ kind: 'user', id: message.id, text });
+      continue;
     }
-    return (
-      <View style={styles.assistantWrap}>
-        {parts.map((part, i) => {
-          if (part.type === 'text') return <RichText key={i} text={String((part as TextPart).text ?? '')} />;
-          if (part.type === 'reasoning')
-            return <ReasoningBlock key={i} text={String(part.text ?? '')} theme={theme} />;
-          if (part.type === 'tool')
-            return <ToolBlock key={(part as ToolPart).id || `tool-${i}`} part={part as ToolPart} />;
-          return null;
-        })}
-        {msg.error?.message ? (
-          <View style={[styles.inlineError, { backgroundColor: theme.dangerSoft }]}>
-            <ThemedText type="small" themeColor="danger">
-              {msg.error.message}
-            </ThemedText>
-          </View>
-        ) : null}
-      </View>
-    );
+
+    if (message.type === 'assistant') {
+      const msg = message as AssistantMessage;
+      const parts = (msg.content ?? []) as TaggedPart[];
+      parts.forEach((part, i) => {
+        if (part.type === 'text') {
+          const text = String((part as TextPart).text ?? '');
+          if (text) push({ kind: 'text', id: `${message.id}-t${i}`, text });
+        } else if (part.type === 'reasoning') {
+          const text = String(part.text ?? '');
+          if (text) {
+            push({
+              kind: 'reasoning',
+              id: `${message.id}-r${i}`,
+              text,
+              active: false,
+            });
+          }
+        } else if (part.type === 'tool') {
+          push({
+            kind: 'tool',
+            id: (part as ToolPart).id || `${message.id}-x${i}`,
+            part: part as ToolPart,
+          });
+        }
+      });
+      if (msg.error?.message) {
+        push({ kind: 'error', id: `${message.id}-err`, text: msg.error.message });
+      }
+      continue;
+    }
+
+    if (message.type === 'idle') continue; // no divider lines — turn end is spacing
+
+    const generic = message as GenericMessage;
+    const label =
+      typeof generic.title === 'string'
+        ? generic.title
+        : typeof generic.text === 'string'
+          ? String(generic.text)
+          : message.type;
+    push({
+      kind: 'caption',
+      id: message.id,
+      text: message.type === label ? label : `${message.type} — ${label}`,
+    });
   }
 
-  if (message.type === 'idle') {
-    const outcome = (message as IdleMessage).outcome;
-    const label = outcome === 'failed' ? 'Turn failed' : outcome === 'interrupted' ? 'Stopped' : 'Done';
-    const color = outcome === 'failed' ? theme.danger : theme.textTertiary;
-    return (
-      <View style={styles.divider}>
-        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-        <ThemedText type="caption" style={{ color }}>
-          {label}
-        </ThemedText>
-        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-      </View>
-    );
+  // A reasoning part is live only while it is the newest thing on screen.
+  if (running && rows.length > 0) {
+    const last = rows[rows.length - 1];
+    if (last.kind === 'reasoning') last.active = true;
   }
 
-  const generic = message as GenericMessage;
-  const label =
-    typeof generic.title === 'string'
-      ? generic.title
-      : typeof generic.text === 'string'
-        ? (generic.text as string)
-        : message.type;
-  return (
-    <View style={[styles.systemChip, { backgroundColor: theme.backgroundSelected }]}>
-      <ThemedText type="caption" themeColor="textSecondary" numberOfLines={3}>
-        {message.type === label ? label : `${message.type}: ${label}`}
-      </ThemedText>
-    </View>
-  );
+  return rows;
 }
 
-function LoadingMessages() {
-  return (
-    <View style={styles.loading}>
-      <Skeleton style={styles.skelUser} />
-      <Skeleton style={styles.skelLine} />
-      <Skeleton style={[styles.skelLine, { width: '70%' }]} />
-      <Skeleton style={styles.skelTool} />
-    </View>
-  );
+// ---------- todos from the agent's todowrite/todoread calls ----------
+
+function normalizeTodos(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) return [];
+  const statuses = new Set(['pending', 'in_progress', 'completed', 'cancelled']);
+  return value
+    .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+    .filter((t) => typeof t.content === 'string')
+    .map((t) => ({
+      content: t.content as string,
+      status: statuses.has(String(t.status)) ? (t.status as TodoItem['status']) : 'pending',
+      priority: typeof t.priority === 'string' ? t.priority : undefined,
+    }));
 }
 
-/** Floating "jump to latest" — appears only after the reader scrolls up. */
-function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => void }) {
-  const theme = useTheme();
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(v, {
-      toValue: visible ? 1 : 0,
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
-  }, [visible, v]);
-  return (
-    <Animated.View
-      pointerEvents={visible ? 'auto' : 'none'}
-      style={[
-        styles.jump,
-        { opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
-      ]}>
-      <PressableScale
-        onPress={onPress}
-        accessibilityLabel="Jump to latest message"
-        style={[styles.jumpInner, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-        <Chevron open color={theme.text} size={7} />
-        <ThemedText type="smallBold">Latest</ThemedText>
-      </PressableScale>
-    </Animated.View>
-  );
+function extractTodos(messages: MessageInfo[]): TodoItem[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.type !== 'assistant') continue;
+    const parts = (message as AssistantMessage).content ?? [];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const part = parts[j];
+      if (part.type !== 'tool') continue;
+      const tool = part as ToolPart;
+      if (tool.name !== 'todowrite' && tool.name !== 'todoread') continue;
+
+      const fromInput = normalizeTodos(tool.state.input?.todos);
+      if (fromInput.length) return fromInput;
+
+      const text = tool.state.content?.[0]?.text;
+      if (typeof text === 'string') {
+        try {
+          const parsed: unknown = JSON.parse(text);
+          const direct = normalizeTodos(parsed);
+          if (direct.length) return direct;
+          if (parsed && typeof parsed === 'object') {
+            const nested = normalizeTodos((parsed as Record<string, unknown>).todos);
+            if (nested.length) return nested;
+          }
+        } catch {
+          // not JSON — try the next candidate
+        }
+      }
+    }
+  }
+  return [];
+}
+
+// ---------- activity label for the working indicator ----------
+
+const TOOL_ACTIVITY: Record<string, string> = {
+  read: 'Reading files',
+  edit: 'Editing files',
+  write: 'Editing files',
+  patch: 'Editing files',
+  bash: 'Running a command',
+  glob: 'Searching the project',
+  grep: 'Searching the project',
+  find: 'Searching the project',
+  list: 'Searching the project',
+  webfetch: 'Searching the web',
+  websearch: 'Searching the web',
+  task: 'Running a subagent',
+  todaywrite: 'Planning',
+};
+
+function activityFor(rows: Row[]): string {
+  const last = rows[rows.length - 1];
+  if (!last) return 'Thinking';
+  switch (last.kind) {
+    case 'reasoning':
+      return 'Thinking';
+    case 'text':
+      return 'Writing';
+    case 'tool': {
+      const name = last.part.name;
+      if (TOOL_ACTIVITY[name]) return TOOL_ACTIVITY[name];
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+    default:
+      return 'Thinking';
+  }
 }
 
 // ---------- screen ----------
@@ -260,13 +280,13 @@ export default function SessionScreen() {
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('disconnected');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [showJump, setShowJump] = useState(false);
-  const [focused, setFocused] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState(() => Date.now());
   const insets = useSafeAreaInsets();
 
-  const listRef = useRef<FlatList<MessageInfo>>(null);
+  const listRef = useRef<FlatList<Row>>(null);
   const autoScrollRef = useRef(true);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordedRef = useRef<string | null>(null);
 
   const loadMessages = useCallback(async () => {
     if (!api || !sessionID) return;
@@ -275,7 +295,10 @@ export default function SessionScreen() {
       setMessages([...res.data].reverse());
       setLoaded(true);
     } catch {
-      // transient — SSE reconnect or next poll will retry
+      // A deleted session 404s forever; an offline PC can stay away for a
+      // while. Either way, resolve to the empty state rather than a spinner
+      // that never stops; the SSE resync refills the moment one lands.
+      setLoaded(true);
     }
   }, [api, sessionID]);
 
@@ -289,7 +312,11 @@ export default function SessionScreen() {
       ]);
       setSessionInfo(session.data);
       setPermissions(perms.data);
-      setRunning(Boolean(act.data[sessionID]));
+      const isRunning = Boolean(act.data[sessionID]);
+      setRunning((prev) => {
+        if (!prev && isRunning) setTurnStartedAt(Date.now());
+        return isRunning;
+      });
     } catch {
       // transient — SSE reconnect or next poll will retry
     }
@@ -311,9 +338,6 @@ export default function SessionScreen() {
     (event: ServerEvent) => {
       const data = event.data as Record<string, any> | undefined;
       if (event.type.startsWith('session.') && data?.sessionID && data.sessionID !== sessionID) return;
-      if (__DEV__ && event.durable) {
-        console.log(`[ocrc] ${event.type} seq=${event.durable.seq}`);
-      }
 
       switch (event.type) {
         case 'session.step.started': {
@@ -333,6 +357,7 @@ export default function SessionScreen() {
                   } as AssistantMessage,
                 ],
           );
+          setTurnStartedAt((t) => (t ? t : Date.now()));
           setRunning(true);
           break;
         }
@@ -448,6 +473,36 @@ export default function SessionScreen() {
     }, [api, sessionID, loadMessages, loadMeta, handleEvent]),
   );
 
+  // "Recently opened" is recorded here, not at the launcher: every way in —
+  // tap, deep link, browser back/forward — passes through this screen, and
+  // it catches the freshest title the session had while open here.
+  useEffect(() => {
+    const info = sessionInfo;
+    if (!info || recordedRef.current === info.id) return;
+    recordedRef.current = info.id;
+    void rememberRecentSession({
+      id: info.id,
+      title: info.title ?? null,
+      directory: info.location?.directory ?? null,
+    });
+  }, [sessionInfo]);
+
+  // Opening a conversation always lands on the newest turn. The first pass
+  // runs with the transcript; the second catches late layout (fonts, code
+  // blocks). onScroll's guard only takes over once the reader scrolls away.
+  useEffect(() => {
+    if (!loaded) return;
+    autoScrollRef.current = true;
+    const raf = requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+    const settle = setTimeout(() => {
+      if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
+    }, 150);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(settle);
+    };
+  }, [loaded]);
+
   // Poll for permission requests while the session is executing.
   useEffect(() => {
     if (!api || !sessionID || !running) return;
@@ -480,6 +535,7 @@ export default function SessionScreen() {
     try {
       await api.prompt(sessionID, { text });
       setDraft('');
+      setTurnStartedAt(Date.now());
       setRunning(true);
       scheduleRefetch(true);
     } catch (err) {
@@ -514,295 +570,196 @@ export default function SessionScreen() {
     [api, sessionID],
   );
 
+  const rows = useMemo(() => buildRows(messages, running), [messages, running]);
+  const todos = useMemo(() => extractTodos(messages), [messages]);
+  const activity = useMemo(() => activityFor(rows), [rows]);
+
   if (ready && !api) return <Redirect href="/setup" />;
 
   const title = sessionInfo?.title?.trim() || 'Session';
-  const subtitle = [
-    sessionInfo?.location?.directory ? basename(sessionInfo.location.directory) : null,
-    sessionInfo?.model?.id ?? null,
-  ]
-    .filter(Boolean)
-    .join('  /  ');
-  const canSend = Boolean(draft.trim()) && !sending;
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/');
   };
 
-  const jumpToLatest = () => {
-    autoScrollRef.current = true;
-    setShowJump(false);
-    listRef.current?.scrollToEnd({ animated: true });
-  };
+  const quiet = { color: theme.inkMuted } as const;
 
   return (
-    <ThemedView style={styles.screen}>
-      {/* header */}
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.two, borderBottomColor: theme.border }]}>
-        <View style={styles.headerInner}>
-          <IconButton onPress={goBack} label="Back to sessions">
-            <BackGlyph color={theme.text} />
-          </IconButton>
-          <View style={styles.headerText}>
-            <ThemedText type="smallBold" numberOfLines={1} accessibilityRole="header" style={styles.headerTitle}>
+    <ThemedView style={{ flex: 1 }}>
+      {/* nav — inline title, tinted back chevron, nothing else */}
+      <View style={{ paddingTop: insets.top }}>
+        <View
+          style={{
+            height: 44,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 6,
+          }}>
+          <PressableScale
+            onPress={goBack}
+            hitSlop={12}
+            accessibilityLabel="Back to sessions"
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+            <Glyph name="chevron-back" size={26} color={theme.accent} />
+          </PressableScale>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <ThemedText type="headline" numberOfLines={1} accessibilityRole="header">
               {title}
             </ThemedText>
-            {subtitle ? (
-              <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
-                {subtitle}
-              </ThemedText>
-            ) : null}
           </View>
-          {running ? (
-            <PressableScale
-              onPress={() => void stop()}
-              accessibilityLabel="Stop the agent"
-              scaleTo={0.94}
-              style={[styles.stop, { backgroundColor: theme.dangerSoft }]}>
-              <View style={[styles.stopSquare, { backgroundColor: theme.danger }]} />
-              <ThemedText type="smallBold" themeColor="danger">
-                Stop
-              </ThemedText>
-            </PressableScale>
-          ) : (
-            <View style={{ width: Touch }} />
-          )}
+          <View style={{ width: 40 }} />
         </View>
-        <ProgressSweep active={running} color={theme.running} />
       </View>
-
-      {streamStatus !== 'connected' && (
-        <Banner tone="info">{streamStatus === 'connecting' ? 'Connecting…' : 'Reconnecting. Updates may lag.'}</Banner>
-      )}
-
-      {execError && (
-        <Banner tone="danger" actionLabel="Dismiss" onAction={() => setExecError(null)}>
-          {execError}
-        </Banner>
-      )}
 
       {/* conversation */}
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.flex}>
+        <View style={{ flex: 1 }}>
           {!loaded ? (
-            <LoadingMessages />
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <ActivityIndicator size="small" color={theme.inkMuted} />
+                <ThemedText type="callout" style={quiet}>
+                  Loading conversation
+                </ThemedText>
+              </View>
+            </View>
           ) : (
             <FlatList
               ref={listRef}
-              data={messages}
-              keyExtractor={(m) => m.id}
-              renderItem={({ item }) => <MessageRow message={item} theme={theme} />}
-              contentContainerStyle={styles.listContent}
+              data={rows}
+              keyExtractor={(r) => r.id}
+              contentContainerStyle={{
+                flexGrow: 1,
+                paddingHorizontal: Space.gutter,
+                paddingTop: Space.gutter,
+                paddingBottom: Space.betweenParts,
+                maxWidth: 560,
+                width: '100%',
+                alignSelf: 'center',
+              }}
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
                 autoScrollRef.current = distance < 140;
-                const far = distance > 400;
-                setShowJump((prev) => (prev === far ? prev : far));
               }}
               scrollEventThrottle={100}
+              showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => {
+                // History lands pinned to the bottom without animating there;
+                // the reader opens on the newest turn.
                 if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
               }}
               ListEmptyComponent={
-                <View style={styles.center}>
-                  <ThemedText type="subtitle">Nothing here yet</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-                    Send a message below to start working with OpenCode.
-                  </ThemedText>
-                </View>
+                <View style={{ flex: 1 }} />
               }
+              renderItem={({ item: row }) => (
+                <View style={{ paddingTop: row.padTop }}>
+                  {row.kind === 'user' ? (
+                    <View
+                      style={{
+                        alignSelf: 'flex-end',
+                        marginLeft: Space.userInset,
+                        backgroundColor: theme.surfaceRaised,
+                        borderRadius: 12,
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                      }}>
+                      <ThemedText type="body" selectable>
+                        {row.text}
+                      </ThemedText>
+                    </View>
+                  ) : row.kind === 'text' ? (
+                    <RichText text={row.text} />
+                  ) : row.kind === 'reasoning' ? (
+                    <ReasoningBlock text={row.text} isActive={row.active} />
+                  ) : row.kind === 'tool' ? (
+                    <ToolBlock part={row.part} />
+                  ) : row.kind === 'error' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Glyph name="warning-outline" size={13} color={theme.negative} />
+                      <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
+                        {row.text}
+                      </ThemedText>
+                    </View>
+                  ) : (
+                    <ThemedText
+                      type="caption"
+                      numberOfLines={3}
+                      style={{ color: theme.inkFaint, textAlign: 'center' }}>
+                      {row.text}
+                    </ThemedText>
+                  )}
+                </View>
+              )}
               ListFooterComponent={
-                running && messages[messages.length - 1]?.type !== 'assistant' ? (
-                  <View style={styles.footer}>
-                    <TypingDots color={theme.textTertiary} />
-                  </View>
-                ) : undefined
+                <View
+                  style={{
+                    gap: 12,
+                    marginTop: rows.length > 0 ? 12 : 0,
+                  }}>
+                  {streamStatus === 'disconnected' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Glyph name="cloud-offline-outline" size={13} color={theme.inkMuted} />
+                      <ThemedText type="callout" style={quiet}>
+                        Reconnecting — updates may lag.
+                      </ThemedText>
+                    </View>
+                  ) : null}
+
+                  {execError ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Glyph name="warning-outline" size={13} color={theme.negative} />
+                      <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
+                        {execError}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+
+                  {todos.length > 0 ? <PlanCard todos={todos} /> : null}
+
+                  {running ? (
+                    <WorkingIndicator activity={activity} since={turnStartedAt} />
+                  ) : null}
+                </View>
               }
             />
           )}
-          <JumpButton visible={showJump} onPress={jumpToLatest} />
         </View>
-
-        {/* approvals sit right above the composer so they are always in thumb reach */}
-        {permissions.length > 0 && (
-          <View style={styles.dock}>
-            <PermissionCard
-              request={permissions[0]}
-              index={0}
-              total={permissions.length}
-              busy={permBusy}
-              onDecide={(decision) => void decide(permissions[0], decision)}
-            />
-          </View>
-        )}
 
         <View
-          style={[
-            styles.composerWrap,
-            { borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, Spacing.two) + Spacing.one },
-          ]}>
-          <View
-            style={[
-              styles.composer,
-              { backgroundColor: theme.backgroundElement, borderColor: focused ? theme.accent : theme.border },
-            ]}>
-            <TextInput
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              style={[styles.input, { color: theme.text }]}
-              placeholder={running ? 'Add a follow-up…' : 'Message OpenCode…'}
-              placeholderTextColor={theme.textTertiary}
-              multiline
-              numberOfLines={1}
-              value={draft}
-              onChangeText={setDraft}
-              editable={Boolean(api)}
-              accessibilityLabel="Message"
-              onKeyPress={(e) => {
-                // Web: Enter sends, Shift+Enter adds a line.
-                if (Platform.OS !== 'web') return;
-                const ne = e.nativeEvent as unknown as { key: string; shiftKey?: boolean };
-                if (ne.key === 'Enter' && !ne.shiftKey) {
-                  (e as unknown as { preventDefault?: () => void }).preventDefault?.();
-                  void send();
-                }
-              }}
-            />
-            <PressableScale
-              disabled={!canSend}
-              onPress={() => void send()}
-              accessibilityLabel="Send message"
-              scaleTo={0.9}
-              style={[
-                styles.send,
-                { backgroundColor: canSend || sending ? theme.accent : theme.backgroundSelected },
-              ]}>
-              {sending ? (
-                <ActivityIndicator size="small" color={theme.onAccent} />
-              ) : (
-                <ArrowUp color={canSend ? theme.onAccent : theme.textTertiary} />
-              )}
-            </PressableScale>
-          </View>
+          style={{
+            paddingBottom: Math.max(insets.bottom, 8),
+            paddingTop: 4,
+            maxWidth: 560,
+            width: '100%',
+            alignSelf: 'center',
+          }}>
+          <Composer
+            value={draft}
+            onChangeText={setDraft}
+            running={running}
+            busy={sending}
+            onSend={() => void send()}
+            onStop={() => void stop()}
+            disabled={!api}
+          />
         </View>
       </KeyboardAvoidingView>
+
+      {/* approvals — a sheet over everything, always in reach */}
+      <PermissionCard
+        request={permissions[0] ?? null}
+        index={0}
+        total={permissions.length}
+        busy={permBusy}
+        onDecide={(decision) => {
+          if (permissions[0]) void decide(permissions[0], decision);
+        }}
+      />
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  flex: { flex: 1 },
-  semibold: { fontWeight: '600' },
-  header: { borderBottomWidth: StyleSheet.hairlineWidth },
-  headerInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three - 4,
-    width: '100%',
-    maxWidth: MaxContentWidth,
-    alignSelf: 'center',
-    paddingHorizontal: Spacing.three,
-    paddingBottom: Spacing.two + 2,
-  },
-  headerText: { flex: 1, gap: 1 },
-  headerTitle: { fontSize: 16, lineHeight: 22 },
-  stop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    height: 38,
-    paddingHorizontal: 14,
-    borderRadius: Radius.pill,
-  },
-  stopSquare: { width: 10, height: 10, borderRadius: 2 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.five, gap: Spacing.two },
-  centerText: { textAlign: 'center', maxWidth: 280 },
-  listContent: {
-    width: '100%',
-    maxWidth: MaxContentWidth,
-    alignSelf: 'center',
-    padding: Spacing.three,
-    gap: Spacing.four - 4,
-    flexGrow: 1,
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
-    maxWidth: '85%',
-    borderRadius: Radius.large,
-    borderBottomRightRadius: 6,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two + 2,
-  },
-  assistantWrap: { gap: Spacing.two + 2, alignSelf: 'stretch' },
-  reasoning: { borderLeftWidth: 2, paddingLeft: Spacing.three - 2, gap: 2 },
-  reasoningHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  reasoningText: { fontStyle: 'italic' },
-  inlineError: { borderRadius: Radius.medium, padding: Spacing.three - 2 },
-  divider: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three - 4, paddingVertical: Spacing.one },
-  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
-  systemChip: {
-    alignSelf: 'center',
-    borderRadius: Radius.pill,
-    paddingHorizontal: Spacing.three - 2,
-    paddingVertical: 4,
-    maxWidth: '92%',
-  },
-  footer: { paddingTop: Spacing.three - 4 },
-  loading: {
-    width: '100%',
-    maxWidth: MaxContentWidth,
-    alignSelf: 'center',
-    padding: Spacing.three,
-    gap: Spacing.three - 4,
-  },
-  skelUser: { height: 44, width: '55%', alignSelf: 'flex-end', borderRadius: Radius.large },
-  skelLine: { height: 14, width: '95%' },
-  skelTool: { height: 56, borderRadius: Radius.medium, marginTop: Spacing.two },
-  jump: { position: 'absolute', alignSelf: 'center', bottom: Spacing.three },
-  jumpInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    height: 38,
-    paddingHorizontal: Spacing.three,
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  dock: { width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  composerWrap: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: Spacing.two + 2,
-    paddingHorizontal: Spacing.three,
-    alignItems: 'center',
-  },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    width: '100%',
-    maxWidth: MaxContentWidth,
-    borderRadius: 26,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingLeft: Spacing.three,
-    paddingRight: 5,
-    paddingVertical: 5,
-    gap: Spacing.two,
-  },
-  input: {
-    flex: 1,
-    maxHeight: 132,
-    minHeight: 36,
-    paddingTop: Platform.OS === 'ios' ? 8 : 6,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 6,
-    fontSize: 16,
-    lineHeight: 22,
-    textAlignVertical: 'center',
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
-  },
-  send: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-});

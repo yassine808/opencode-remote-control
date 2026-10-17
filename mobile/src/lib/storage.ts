@@ -44,3 +44,62 @@ export async function clearConnection(): Promise<void> {
   }
   await SecureStore.deleteItemAsync(KEY);
 }
+
+// ---------- recently opened conversations ----------
+
+export interface RecentSession {
+  id: string;
+  /** Title when it was opened; the launcher prefers the live title when it has one. */
+  title?: string | null;
+  /** Project directory at open time, for the launcher's caption. */
+  directory?: string | null;
+  openedAt: number;
+}
+
+const RECENTS_KEY = 'ocrc.recents.v1';
+const RECENTS_MAX = 5;
+
+export async function loadRecentSessions(): Promise<RecentSession[]> {
+  try {
+    const raw = webStorage
+      ? webStorage.getItem(RECENTS_KEY)
+      : await SecureStore.getItemAsync(RECENTS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is RecentSession =>
+        !!entry && typeof entry === 'object' && typeof (entry as RecentSession).id === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Move a conversation to the front of the recents — recorded when it opens. */
+export async function rememberRecentSession(entry: {
+  id: string;
+  title?: string | null;
+  directory?: string | null;
+}): Promise<void> {
+  try {
+    const previous = await loadRecentSessions();
+    const next: RecentSession[] = [
+      {
+        id: entry.id,
+        title: entry.title ?? null,
+        directory: entry.directory ?? null,
+        openedAt: Date.now(),
+      },
+      ...previous.filter((r) => r.id !== entry.id),
+    ].slice(0, RECENTS_MAX);
+    const raw = JSON.stringify(next);
+    if (webStorage) {
+      webStorage.setItem(RECENTS_KEY, raw);
+      return;
+    }
+    await SecureStore.setItemAsync(RECENTS_KEY, raw);
+  } catch {
+    // History is a convenience — never let it break opening a conversation.
+  }
+}

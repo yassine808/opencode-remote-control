@@ -1,150 +1,123 @@
-import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
+/**
+ * One line per tool call: what ran, where, and how it ended.
+ *
+ * The transcript row is deliberately quiet — icon, `tool · file`, nothing
+ * else. Detail belongs to the permission card (before) and the diff (after),
+ * not to a running commentary. The one exception is a write: the content
+ * being written is the whole point of the call, so it previews below the
+ * row, collapsed to 12 lines.
+ */
+
+import { useState } from 'react';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Check, Chevron, Cross, PressableScale, StatusDot } from '@/components/ui';
-import { Radius, Spacing } from '@/constants/theme';
+import { Glyph, PressableScale } from '@/components/ui';
+import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { ToolPart } from '@/lib/types';
+import { basename } from '@/lib/paths';
 
-const NATIVE = Platform.OS !== 'web';
+const COLLAPSED_LINES = 12;
 
-/** Pick the single most informative field of a tool's input for the collapsed summary. */
-function summarize(input: Record<string, unknown> | undefined): string {
-  if (!input) return '';
-  const keys = ['command', 'filePath', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
-  for (const key of keys) {
-    const v = input[key];
-    if (typeof v === 'string' && v.trim()) return v.replace(/\s+/g, ' ').trim();
+function titleFor(part: ToolPart): string {
+  const input = part.state.input ?? {};
+  const path =
+    (typeof input.filePath === 'string' && input.filePath) ||
+    (typeof input.path === 'string' && input.path) ||
+    (typeof input.pattern === 'string' && input.pattern) ||
+    '';
+  return path ? `${part.name} · ${basename(path)}` : part.name;
+}
+
+function previewFor(part: ToolPart): string | null {
+  const input = part.state.input ?? {};
+  if (part.name === 'write' && typeof input.content === 'string' && input.content.length > 0) {
+    return input.content;
   }
-  const first = Object.values(input).find((v) => typeof v === 'string' && v.trim()) as string | undefined;
-  return first ? first.replace(/\s+/g, ' ').trim() : JSON.stringify(input);
+  return null;
 }
 
-function prettyName(name: string): string {
-  const spaced = name.replace(/[_-]+/g, ' ').trim();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-function Section({ label, text, color }: { label: string; text: string; color?: string }) {
+function CodePreview({ code }: { code: string }) {
   const theme = useTheme();
+  const [expanded, setExpanded] = useState(false);
+
+  const lines = code.split('\n');
+  const truncated = !expanded && lines.length > COLLAPSED_LINES;
+  const shown = truncated ? lines.slice(0, COLLAPSED_LINES).join('\n') : code;
+
   return (
-    <View style={styles.section}>
-      <ThemedText type="caption" themeColor="textTertiary">
-        {label}
-      </ThemedText>
-      <View style={[styles.codeBox, { backgroundColor: theme.code, borderColor: theme.border }]}>
-        <ThemedText type="code" selectable style={color ? { color } : undefined}>
-          {text}
+    <View
+      style={{
+        backgroundColor: theme.inkWell,
+        borderRadius: 12,
+        overflow: 'hidden',
+      }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}>
+        <ThemedText
+          type="code"
+          style={{
+            color: theme.ink,
+            lineHeight: 18,
+          }}>
+          {shown}
         </ThemedText>
-      </View>
+      </ScrollView>
+      {truncated ? (
+        <PressableScale
+          onPress={() => setExpanded(true)}
+          scaleTo={0.98}
+          style={{
+            paddingHorizontal: 14,
+            paddingBottom: 10,
+            paddingTop: 2,
+          }}>
+          <ThemedText type="caption" style={{ color: theme.accent }}>
+            Show all {lines.length} lines
+          </ThemedText>
+        </PressableScale>
+      ) : null}
     </View>
   );
 }
 
 export function ToolBlock({ part }: { part: ToolPart }) {
   const theme = useTheme();
-  const [expanded, setExpanded] = useState(false);
-  const status = part.state?.status ?? 'unknown';
-  const input = part.state?.input;
-  const summary = summarize(input);
-  const outputText = (part.state?.content ?? [])
-    .map((c) => c.text ?? '')
-    .filter(Boolean)
-    .join('\n');
-  const errorText = part.state?.error?.message;
 
-  const body = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(body, {
-      toValue: expanded ? 1 : 0,
-      duration: 200,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: NATIVE,
-    }).start();
-  }, [expanded, body]);
+  const status = part.state.status;
+  const running = status === 'running' || status === 'pending';
+  const errored = status === 'error' || !!part.state.error;
 
-  const tone =
-    status === 'running'
-      ? theme.running
-      : status === 'completed'
-        ? theme.success
-        : status === 'error'
-          ? theme.danger
-          : theme.textTertiary;
-  const toneSoft =
-    status === 'running'
-      ? theme.runningSoft
-      : status === 'completed'
-        ? theme.successSoft
-        : status === 'error'
-          ? theme.dangerSoft
-          : theme.backgroundSelected;
+  const preview = previewFor(part);
+  const errorMessage = errored ? part.state.error?.message : undefined;
 
   return (
-    <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-      <PressableScale
-        onPress={() => setExpanded((v) => !v)}
-        scaleTo={0.99}
-        accessibilityLabel={`${prettyName(part.name)}, ${status}. ${expanded ? 'Collapse' : 'Expand'} details`}
-        accessibilityState={{ expanded }}
-        style={styles.header}>
-        <View style={[styles.badge, { backgroundColor: toneSoft }]}>
-          {status === 'running' ? (
-            <StatusDot color={tone} pulse size={7} />
-          ) : status === 'completed' ? (
-            <Check color={tone} size={10} />
-          ) : status === 'error' ? (
-            <Cross color={tone} size={8} />
-          ) : (
-            <StatusDot color={tone} size={6} />
-          )}
-        </View>
-        <View style={styles.headerText}>
-          <ThemedText type="smallBold" numberOfLines={1}>
-            {prettyName(part.name)}
-          </ThemedText>
-          {summary ? (
-            <ThemedText type="code" themeColor="textSecondary" numberOfLines={expanded ? 3 : 1}>
-              {summary}
-            </ThemedText>
-          ) : null}
-        </View>
-        <Chevron open={expanded} color={theme.textTertiary} />
-      </PressableScale>
+    <View style={{ gap: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {running ? (
+          <ActivityIndicator size="small" color={theme.inkMuted} style={{ width: 13 }} />
+        ) : errored ? (
+          <Glyph name="close-circle-outline" size={13} color={theme.negative} />
+        ) : (
+          <Glyph name="checkmark-circle-outline" size={13} color={theme.inkMuted} />
+        )}
+        <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
+          {titleFor(part)}
+        </ThemedText>
+      </View>
 
-      {expanded && (
-        <Animated.View
-          style={[
-            styles.body,
-            {
-              borderTopColor: theme.border,
-              opacity: body,
-              transform: [{ translateY: body.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
-            },
-          ]}>
-          {input && Object.keys(input).length > 0 ? <Section label="Input" text={JSON.stringify(input, null, 2)} /> : null}
-          {errorText ? <Section label="Error" text={errorText} color={theme.danger} /> : null}
-          {outputText ? (
-            <Section label="Output" text={outputText.length > 4000 ? `${outputText.slice(0, 4000)}…` : outputText} />
-          ) : null}
-          {!input && !errorText && !outputText ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              No details yet.
-            </ThemedText>
-          ) : null}
-        </Animated.View>
-      )}
+      {typeof errorMessage === 'string' && errorMessage.length > 0 ? (
+        <ThemedText
+          type="footnote"
+          style={{ color: theme.negative, fontFamily: Fonts.mono, lineHeight: 18 }}>
+          {errorMessage}
+        </ThemedText>
+      ) : null}
+
+      {preview ? <CodePreview code={preview} /> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  card: { borderRadius: Radius.medium, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three - 4, padding: Spacing.three - 2 },
-  headerText: { flex: 1, gap: 1 },
-  badge: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  body: { borderTopWidth: StyleSheet.hairlineWidth, padding: Spacing.three - 2, gap: Spacing.three - 4 },
-  section: { gap: 4 },
-  codeBox: { borderRadius: Radius.small, borderWidth: StyleSheet.hairlineWidth, padding: Spacing.two + 2 },
-});
