@@ -1,19 +1,38 @@
-import { Redirect, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   FlatList,
-  Pressable,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   TextInput,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PermissionCard } from '@/components/permission-card';
+import { RichText } from '@/components/rich-text';
+import { basename } from '@/components/session-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { ToolBlock } from '@/components/tool-block';
+import {
+  ArrowUp,
+  BackGlyph,
+  Banner,
+  Chevron,
+  IconButton,
+  PressableScale,
+  ProgressSweep,
+  Skeleton,
+  TypingDots,
+} from '@/components/ui';
+import { MaxContentWidth, Radius, Spacing, Touch } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
 import { useConnection } from '@/lib/connection';
@@ -43,12 +62,6 @@ import type {
 
 type Theme = ReturnType<typeof useTheme>;
 type TaggedPart = MessagePart & { __ordinal?: number };
-
-const TOOL_STATUS_COLORS: Record<string, string> = {
-  running: '#E8A13C',
-  completed: '#3FB950',
-  error: '#F85149',
-};
 
 // ---------- streaming merge helpers ----------
 
@@ -91,74 +104,26 @@ function ReasoningBlock({ text, theme }: { text: string; theme: Theme }) {
   const [expanded, setExpanded] = useState(false);
   if (!text) return null;
   return (
-    <Pressable
+    <PressableScale
       onPress={() => setExpanded((v) => !v)}
-      style={[styles.reasoning, { borderLeftColor: theme.backgroundSelected }]}>
-      <ThemedText type="small" themeColor="textSecondary">
-        Thinking{expanded ? '' : ' — tap to expand'}
-      </ThemedText>
+      scaleTo={0.99}
+      accessibilityLabel={expanded ? 'Collapse reasoning' : 'Expand reasoning'}
+      accessibilityState={{ expanded }}
+      style={[styles.reasoning, { borderLeftColor: theme.border }]}>
+      <View style={styles.reasoningHead}>
+        <ThemedText type="caption" themeColor="textSecondary" style={styles.semibold}>
+          Reasoning
+        </ThemedText>
+        <Chevron open={expanded} color={theme.textTertiary} size={6} />
+      </View>
       <ThemedText
         type="small"
         themeColor="textSecondary"
-        numberOfLines={expanded ? undefined : 3}
+        numberOfLines={expanded ? undefined : 2}
         style={styles.reasoningText}>
         {text}
       </ThemedText>
-    </Pressable>
-  );
-}
-
-function ToolBlock({ part, theme }: { part: ToolPart; theme: Theme }) {
-  const [expanded, setExpanded] = useState(false);
-  const status = part.state?.status ?? 'unknown';
-  const color = TOOL_STATUS_COLORS[status] ?? theme.textSecondary;
-  const inputPreview = part.state?.input ? JSON.stringify(part.state.input) : '';
-  const outputText = (part.state?.content ?? [])
-    .map((c) => c.text ?? '')
-    .filter(Boolean)
-    .join('\n');
-  const glyph = status === 'running' ? '●' : status === 'completed' ? '✓' : status === 'error' ? '✗' : '·';
-
-  return (
-    <Pressable
-      onPress={() => setExpanded((v) => !v)}
-      style={[styles.tool, { backgroundColor: theme.backgroundElement }]}>
-      <View style={styles.toolHeader}>
-        <ThemedText type="small" style={{ color }}>
-          {glyph}
-        </ThemedText>
-        <ThemedText type="code" style={styles.toolName} numberOfLines={1}>
-          {part.name}
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {status}
-        </ThemedText>
-      </View>
-      {!expanded && inputPreview ? (
-        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.toolPreview}>
-          {inputPreview}
-        </ThemedText>
-      ) : null}
-      {expanded && (
-        <View style={styles.toolBody}>
-          {inputPreview ? (
-            <ThemedText type="code" style={styles.toolCode}>
-              {JSON.stringify(part.state.input, null, 2)}
-            </ThemedText>
-          ) : null}
-          {part.state?.error?.message ? (
-            <ThemedText type="code" style={[styles.toolCode, { color: TOOL_STATUS_COLORS.error }]}>
-              {part.state.error.message}
-            </ThemedText>
-          ) : null}
-          {outputText ? (
-            <ThemedText type="code" style={styles.toolCode}>
-              {outputText.length > 4000 ? `${outputText.slice(0, 4000)}…` : outputText}
-            </ThemedText>
-          ) : null}
-        </View>
-      )}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -166,8 +131,10 @@ function MessageRow({ message, theme }: { message: MessageInfo; theme: Theme }) 
   if (message.type === 'user') {
     const text = String((message as UserMessage).text ?? '');
     return (
-      <View style={[styles.userBubble, { backgroundColor: theme.backgroundSelected }]}>
-        <ThemedText>{text}</ThemedText>
+      <View style={[styles.userBubble, { backgroundColor: theme.accent }]}>
+        <ThemedText selectable style={{ color: theme.onAccent }}>
+          {text}
+        </ThemedText>
       </View>
     );
   }
@@ -178,24 +145,26 @@ function MessageRow({ message, theme }: { message: MessageInfo; theme: Theme }) 
     if (parts.length === 0 && !msg.error) {
       return (
         <View style={styles.assistantWrap}>
-          <ActivityIndicator size="small" color={theme.textSecondary} />
+          <TypingDots color={theme.textTertiary} />
         </View>
       );
     }
     return (
       <View style={styles.assistantWrap}>
         {parts.map((part, i) => {
-          if (part.type === 'text') return <ThemedText key={i}>{(part as TextPart).text}</ThemedText>;
+          if (part.type === 'text') return <RichText key={i} text={String((part as TextPart).text ?? '')} />;
           if (part.type === 'reasoning')
             return <ReasoningBlock key={i} text={String(part.text ?? '')} theme={theme} />;
           if (part.type === 'tool')
-            return <ToolBlock key={(part as ToolPart).id || `tool-${i}`} part={part as ToolPart} theme={theme} />;
+            return <ToolBlock key={(part as ToolPart).id || `tool-${i}`} part={part as ToolPart} />;
           return null;
         })}
         {msg.error?.message ? (
-          <ThemedText type="small" style={styles.errorInline}>
-            {msg.error.message}
-          </ThemedText>
+          <View style={[styles.inlineError, { backgroundColor: theme.dangerSoft }]}>
+            <ThemedText type="small" themeColor="danger">
+              {msg.error.message}
+            </ThemedText>
+          </View>
         ) : null}
       </View>
     );
@@ -203,10 +172,16 @@ function MessageRow({ message, theme }: { message: MessageInfo; theme: Theme }) 
 
   if (message.type === 'idle') {
     const outcome = (message as IdleMessage).outcome;
+    const label = outcome === 'failed' ? 'Turn failed' : outcome === 'interrupted' ? 'Stopped' : 'Done';
+    const color = outcome === 'failed' ? theme.danger : theme.textTertiary;
     return (
-      <ThemedText type="small" themeColor="textSecondary" style={styles.idleLine}>
-        {outcome === 'failed' ? '— turn failed' : outcome === 'interrupted' ? '— interrupted' : '— idle'}
-      </ThemedText>
+      <View style={styles.divider}>
+        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+        <ThemedText type="caption" style={{ color }}>
+          {label}
+        </ThemedText>
+        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+      </View>
     );
   }
 
@@ -218,66 +193,52 @@ function MessageRow({ message, theme }: { message: MessageInfo; theme: Theme }) 
         ? (generic.text as string)
         : message.type;
   return (
-    <ThemedText type="small" themeColor="textSecondary" style={styles.systemLine} numberOfLines={3}>
-      [{message.type}] {label}
-    </ThemedText>
+    <View style={[styles.systemChip, { backgroundColor: theme.backgroundSelected }]}>
+      <ThemedText type="caption" themeColor="textSecondary" numberOfLines={3}>
+        {message.type === label ? label : `${message.type}: ${label}`}
+      </ThemedText>
+    </View>
   );
 }
 
-function PermissionCard({
-  request,
-  busy,
-  theme,
-  onDecide,
-}: {
-  request: PermissionRequest;
-  busy: boolean;
-  theme: Theme;
-  onDecide: (decision: PermissionDecision) => void;
-}) {
-  const resources = request.resources ?? [];
-  const shown = resources.slice(0, 3);
+function LoadingMessages() {
   return (
-    <View style={[styles.permCard, { borderColor: TOOL_STATUS_COLORS.running, backgroundColor: theme.backgroundElement }]}>
-      <ThemedText type="smallBold">Approval needed</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {request.message || `OpenCode wants to run: ${request.action}`}
-      </ThemedText>
-      {shown.map((r) => (
-        <ThemedText key={r} type="code" numberOfLines={1} style={styles.permResource}>
-          {r}
-        </ThemedText>
-      ))}
-      {resources.length > shown.length ? (
-        <ThemedText type="small" themeColor="textSecondary">
-          +{resources.length - shown.length} more
-        </ThemedText>
-      ) : null}
-      <View style={styles.permButtons}>
-        <Pressable
-          disabled={busy}
-          style={[styles.permButton, { backgroundColor: TOOL_STATUS_COLORS.completed }]}
-          onPress={() => onDecide('once')}>
-          <ThemedText type="smallBold" style={styles.whiteText}>
-            Allow once
-          </ThemedText>
-        </Pressable>
-        <Pressable
-          disabled={busy}
-          style={[styles.permButton, { backgroundColor: theme.backgroundSelected }]}
-          onPress={() => onDecide('always')}>
-          <ThemedText type="smallBold">Always</ThemedText>
-        </Pressable>
-        <Pressable
-          disabled={busy}
-          style={[styles.permButton, { backgroundColor: TOOL_STATUS_COLORS.error }]}
-          onPress={() => onDecide('reject')}>
-          <ThemedText type="smallBold" style={styles.whiteText}>
-            Reject
-          </ThemedText>
-        </Pressable>
-      </View>
+    <View style={styles.loading}>
+      <Skeleton style={styles.skelUser} />
+      <Skeleton style={styles.skelLine} />
+      <Skeleton style={[styles.skelLine, { width: '70%' }]} />
+      <Skeleton style={styles.skelTool} />
     </View>
+  );
+}
+
+/** Floating "jump to latest" — appears only after the reader scrolls up. */
+function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(v, {
+      toValue: visible ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [visible, v]);
+  return (
+    <Animated.View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={[
+        styles.jump,
+        { opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+      ]}>
+      <PressableScale
+        onPress={onPress}
+        accessibilityLabel="Jump to latest message"
+        style={[styles.jumpInner, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <Chevron open color={theme.text} size={7} />
+        <ThemedText type="smallBold">Latest</ThemedText>
+      </PressableScale>
+    </Animated.View>
   );
 }
 
@@ -299,6 +260,9 @@ export default function SessionScreen() {
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('disconnected');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [showJump, setShowJump] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const listRef = useRef<FlatList<MessageInfo>>(null);
   const autoScrollRef = useRef(true);
@@ -553,181 +517,292 @@ export default function SessionScreen() {
   if (ready && !api) return <Redirect href="/setup" />;
 
   const title = sessionInfo?.title?.trim() || 'Session';
+  const subtitle = [
+    sessionInfo?.location?.directory ? basename(sessionInfo.location.directory) : null,
+    sessionInfo?.model?.id ?? null,
+  ]
+    .filter(Boolean)
+    .join('  /  ');
+  const canSend = Boolean(draft.trim()) && !sending;
+
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  };
+
+  const jumpToLatest = () => {
+    autoScrollRef.current = true;
+    setShowJump(false);
+    listRef.current?.scrollToEnd({ animated: true });
+  };
 
   return (
     <ThemedView style={styles.screen}>
-      <Stack.Screen
-        options={{
-          title,
-          headerRight: running
-            ? () => (
-                <Pressable onPress={() => void stop()}>
-                  <ThemedText type="smallBold" style={styles.errorText}>
-                    Stop
-                  </ThemedText>
-                </Pressable>
-              )
-            : undefined,
-        }}
-      />
+      {/* header */}
+      <View style={[styles.header, { paddingTop: insets.top + Spacing.two, borderBottomColor: theme.border }]}>
+        <View style={styles.headerInner}>
+          <IconButton onPress={goBack} label="Back to sessions">
+            <BackGlyph color={theme.text} />
+          </IconButton>
+          <View style={styles.headerText}>
+            <ThemedText type="smallBold" numberOfLines={1} accessibilityRole="header" style={styles.headerTitle}>
+              {title}
+            </ThemedText>
+            {subtitle ? (
+              <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+                {subtitle}
+              </ThemedText>
+            ) : null}
+          </View>
+          {running ? (
+            <PressableScale
+              onPress={() => void stop()}
+              accessibilityLabel="Stop the agent"
+              scaleTo={0.94}
+              style={[styles.stop, { backgroundColor: theme.dangerSoft }]}>
+              <View style={[styles.stopSquare, { backgroundColor: theme.danger }]} />
+              <ThemedText type="smallBold" themeColor="danger">
+                Stop
+              </ThemedText>
+            </PressableScale>
+          ) : (
+            <View style={{ width: Touch }} />
+          )}
+        </View>
+        <ProgressSweep active={running} color={theme.running} />
+      </View>
 
       {streamStatus !== 'connected' && (
-        <View style={[styles.strip, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {streamStatus === 'connecting' ? 'Connecting…' : 'Reconnecting — updates may lag'}
-          </ThemedText>
-        </View>
+        <Banner tone="info">{streamStatus === 'connecting' ? 'Connecting…' : 'Reconnecting. Updates may lag.'}</Banner>
       )}
 
       {execError && (
-        <Pressable style={[styles.strip, styles.errorStrip]} onPress={() => setExecError(null)}>
-          <ThemedText type="small" style={styles.errorText}>
-            {execError} (tap to dismiss)
-          </ThemedText>
-        </Pressable>
+        <Banner tone="danger" actionLabel="Dismiss" onAction={() => setExecError(null)}>
+          {execError}
+        </Banner>
       )}
 
-      {permissions.map((request) => (
-        <PermissionCard
-          key={request.id}
-          request={request}
-          busy={permBusy}
-          theme={theme}
-          onDecide={(decision) => void decide(request, decision)}
-        />
-      ))}
-
-      {!loaded ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.text} />
-        </View>
-      ) : (
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          renderItem={({ item }) => <MessageRow message={item} theme={theme} />}
-          contentContainerStyle={styles.listContent}
-          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-            const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
-            autoScrollRef.current = distance < 140;
-          }}
-          scrollEventThrottle={100}
-          onContentSizeChange={() => {
-            if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
-          }}
-          ListEmptyComponent={
-            <View style={styles.center}>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-                No messages yet. Send one from the composer below.
-              </ThemedText>
-            </View>
-          }
-          ListFooterComponent={
-            running ? (
-              <ActivityIndicator size="small" color={theme.textSecondary} style={styles.footerSpinner} />
-            ) : undefined
-          }
-        />
-      )}
-
-      <View
-        style={[
-          styles.composer,
-          { backgroundColor: theme.background, borderTopColor: theme.backgroundSelected },
-        ]}>
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.backgroundElement, color: theme.text }]}
-          placeholder="Message OpenCode…"
-          placeholderTextColor={theme.textSecondary}
-          multiline
-          value={draft}
-          onChangeText={setDraft}
-          editable={Boolean(api)}
-        />
-        <Pressable
-          style={[
-            styles.sendButton,
-            { backgroundColor: draft.trim() && !sending ? '#2F81F7' : theme.backgroundSelected },
-          ]}
-          disabled={!draft.trim() || sending}
-          onPress={() => void send()}>
-          {sending ? (
-            <ActivityIndicator size="small" color="#ffffff" />
+      {/* conversation */}
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.flex}>
+          {!loaded ? (
+            <LoadingMessages />
           ) : (
-            <ThemedText type="smallBold" style={styles.whiteText}>
-              Send
-            </ThemedText>
+            <FlatList
+              ref={listRef}
+              data={messages}
+              keyExtractor={(m) => m.id}
+              renderItem={({ item }) => <MessageRow message={item} theme={theme} />}
+              contentContainerStyle={styles.listContent}
+              onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+                const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
+                autoScrollRef.current = distance < 140;
+                const far = distance > 400;
+                setShowJump((prev) => (prev === far ? prev : far));
+              }}
+              scrollEventThrottle={100}
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => {
+                if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
+              }}
+              ListEmptyComponent={
+                <View style={styles.center}>
+                  <ThemedText type="subtitle">Nothing here yet</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
+                    Send a message below to start working with OpenCode.
+                  </ThemedText>
+                </View>
+              }
+              ListFooterComponent={
+                running && messages[messages.length - 1]?.type !== 'assistant' ? (
+                  <View style={styles.footer}>
+                    <TypingDots color={theme.textTertiary} />
+                  </View>
+                ) : undefined
+              }
+            />
           )}
-        </Pressable>
-      </View>
+          <JumpButton visible={showJump} onPress={jumpToLatest} />
+        </View>
+
+        {/* approvals sit right above the composer so they are always in thumb reach */}
+        {permissions.length > 0 && (
+          <View style={styles.dock}>
+            <PermissionCard
+              request={permissions[0]}
+              index={0}
+              total={permissions.length}
+              busy={permBusy}
+              onDecide={(decision) => void decide(permissions[0], decision)}
+            />
+          </View>
+        )}
+
+        <View
+          style={[
+            styles.composerWrap,
+            { borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, Spacing.two) + Spacing.one },
+          ]}>
+          <View
+            style={[
+              styles.composer,
+              { backgroundColor: theme.backgroundElement, borderColor: focused ? theme.accent : theme.border },
+            ]}>
+            <TextInput
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              style={[styles.input, { color: theme.text }]}
+              placeholder={running ? 'Add a follow-up…' : 'Message OpenCode…'}
+              placeholderTextColor={theme.textTertiary}
+              multiline
+              numberOfLines={1}
+              value={draft}
+              onChangeText={setDraft}
+              editable={Boolean(api)}
+              accessibilityLabel="Message"
+              onKeyPress={(e) => {
+                // Web: Enter sends, Shift+Enter adds a line.
+                if (Platform.OS !== 'web') return;
+                const ne = e.nativeEvent as unknown as { key: string; shiftKey?: boolean };
+                if (ne.key === 'Enter' && !ne.shiftKey) {
+                  (e as unknown as { preventDefault?: () => void }).preventDefault?.();
+                  void send();
+                }
+              }}
+            />
+            <PressableScale
+              disabled={!canSend}
+              onPress={() => void send()}
+              accessibilityLabel="Send message"
+              scaleTo={0.9}
+              style={[
+                styles.send,
+                { backgroundColor: canSend || sending ? theme.accent : theme.backgroundSelected },
+              ]}>
+              {sending ? (
+                <ActivityIndicator size="small" color={theme.onAccent} />
+              ) : (
+                <ArrowUp color={canSend ? theme.onAccent : theme.textTertiary} />
+              )}
+            </PressableScale>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  strip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
-  errorStrip: { backgroundColor: '#F8514922' },
-  errorText: { color: '#F85149' },
-  errorInline: { color: '#F85149' },
-  whiteText: { color: '#ffffff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.five },
-  centerText: { textAlign: 'center' },
-  listContent: { padding: Spacing.three, gap: Spacing.three, flexGrow: 1 },
+  flex: { flex: 1 },
+  semibold: { fontWeight: '600' },
+  header: { borderBottomWidth: StyleSheet.hairlineWidth },
+  headerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three - 4,
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.two + 2,
+  },
+  headerText: { flex: 1, gap: 1 },
+  headerTitle: { fontSize: 16, lineHeight: 22 },
+  stop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: Radius.pill,
+  },
+  stopSquare: { width: 10, height: 10, borderRadius: 2 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.five, gap: Spacing.two },
+  centerText: { textAlign: 'center', maxWidth: 280 },
+  listContent: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    padding: Spacing.three,
+    gap: Spacing.four - 4,
+    flexGrow: 1,
+  },
   userBubble: {
     alignSelf: 'flex-end',
     maxWidth: '85%',
-    borderRadius: Spacing.three,
+    borderRadius: Radius.large,
+    borderBottomRightRadius: 6,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.two + 2,
   },
-  assistantWrap: { gap: Spacing.two, alignSelf: 'stretch' },
-  reasoning: { borderLeftWidth: 2, paddingLeft: Spacing.three, gap: Spacing.one },
+  assistantWrap: { gap: Spacing.two + 2, alignSelf: 'stretch' },
+  reasoning: { borderLeftWidth: 2, paddingLeft: Spacing.three - 2, gap: 2 },
+  reasoningHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   reasoningText: { fontStyle: 'italic' },
-  tool: { borderRadius: Spacing.two, padding: Spacing.three, gap: Spacing.two },
-  toolHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  toolName: { flex: 1 },
-  toolPreview: { opacity: 0.8 },
-  toolBody: { gap: Spacing.two },
-  toolCode: { fontSize: 12, lineHeight: 16 },
-  idleLine: { textAlign: 'center' },
-  systemLine: { textAlign: 'center', fontStyle: 'italic' },
-  permCard: {
-    margin: Spacing.three,
-    marginBottom: 0,
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
-    gap: Spacing.two,
+  inlineError: { borderRadius: Radius.medium, padding: Spacing.three - 2 },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three - 4, paddingVertical: Spacing.one },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  systemChip: {
+    alignSelf: 'center',
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three - 2,
+    paddingVertical: 4,
+    maxWidth: '92%',
   },
-  permResource: { fontSize: 12, lineHeight: 16 },
-  permButtons: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
-  permButton: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Spacing.two },
+  footer: { paddingTop: Spacing.three - 4 },
+  loading: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    padding: Spacing.three,
+    gap: Spacing.three - 4,
+  },
+  skelUser: { height: 44, width: '55%', alignSelf: 'flex-end', borderRadius: Radius.large },
+  skelLine: { height: 14, width: '95%' },
+  skelTool: { height: 56, borderRadius: Radius.medium, marginTop: Spacing.two },
+  jump: { position: 'absolute', alignSelf: 'center', bottom: Spacing.three },
+  jumpInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 38,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  dock: { width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+  composerWrap: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: Spacing.two + 2,
+    paddingHorizontal: Spacing.three,
+    alignItems: 'center',
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingLeft: Spacing.three,
+    paddingRight: 5,
+    paddingVertical: 5,
     gap: Spacing.two,
-    padding: Spacing.three,
-    borderTopWidth: StyleSheet.hairlineWidth,
   },
   input: {
     flex: 1,
-    maxHeight: 120,
-    minHeight: 40,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    maxHeight: 132,
+    minHeight: 36,
+    paddingTop: Platform.OS === 'ios' ? 8 : 6,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 6,
     fontSize: 16,
-    textAlignVertical: 'top',
+    lineHeight: 22,
+    textAlignVertical: 'center',
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
-  sendButton: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
-    minWidth: 64,
-    alignItems: 'center',
-  },
-  footerSpinner: { marginVertical: Spacing.three },
+  send: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
 });
