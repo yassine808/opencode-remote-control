@@ -11,7 +11,7 @@
  */
 
 import { Redirect, router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -129,12 +129,12 @@ function ProjectRow({
   expanded,
   last,
   onToggle,
-}: {
+}: Readonly<{
   group: ProjectGroup;
   expanded: boolean;
   last: boolean;
   onToggle: () => void;
-}) {
+}>) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const [rotation] = useState(() => new Animated.Value(expanded ? 1 : 0));
@@ -187,7 +187,7 @@ function ProjectRow({
 }
 
 /** Section label — "Recent", "Projects". A list row so it scrolls with them. */
-function SectionHead({ title }: { title: string }) {
+function SectionHead({ title }: Readonly<{ title: string }>) {
   const theme = useTheme();
   return (
     <ThemedText type="footnote" style={[styles.sectionHead, { color: theme.inkMuted }]}>
@@ -201,7 +201,7 @@ function SectionHead({ title }: { title: string }) {
  * holds, erases, repeats — with a blinking caret. Idle sessions render the
  * plain title.
  */
-function TypingTitle({ title, style }: { title: string; style?: any }) {
+function TypingTitle({ title, style }: Readonly<{ title: string; style?: any }>) {
   const reduce = useReduceMotion();
   const theme = useTheme();
   const [count, setCount] = useState(0);
@@ -265,7 +265,7 @@ function SessionRow({
   running,
   onPress,
   onTogglePin,
-}: {
+}: Readonly<{
   title: string;
   /** the agent is working in this session right now */
   running?: boolean;
@@ -276,7 +276,7 @@ function SessionRow({
   last: boolean;
   onPress: () => void;
   onTogglePin?: () => void;
-}) {
+}>) {
   const theme = useTheme();
   return (
     <View>
@@ -325,6 +325,23 @@ function SessionRow({
       </View>
       {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
     </View>
+  );
+}
+
+/** The bottom link — the version stamp, and the way into the updates screen. */
+function FooterLink() {
+  return (
+    <PressableScale
+      onPress={() => router.push('/update')}
+      scaleTo={0.98}
+      accessibilityLabel="App version and updates"
+      style={styles.footer}>
+      <ThemedText type="caption" themeColor="inkFaint">
+        {installedVersionCode() > 0
+          ? `OpenCode Remote ${installedVersion()} (${installedVersionCode()})`
+          : 'OpenCode Remote — web preview'}
+      </ThemedText>
+    </PressableScale>
   );
 }
 
@@ -585,19 +602,67 @@ export default function HomeScreen() {
   if (!ready) return <ThemedView style={styles.screen} />;
   if (!api) return <Redirect href="/setup" />;
 
-  const dotColor =
-    streamStatus === 'connected'
-      ? theme.positive
-      : streamStatus === 'connecting'
-        ? theme.inkFaint
-        : theme.negative;
+  const dotColor = {
+    connected: theme.positive,
+    connecting: theme.inkFaint,
+    disconnected: theme.negative,
+  }[streamStatus];
 
-  const dotLabel =
-    streamStatus === 'connected'
-      ? 'PC connected'
-      : streamStatus === 'connecting'
-        ? 'Checking'
-        : 'PC unreachable';
+  const dotLabel = {
+    connected: 'PC connected',
+    connecting: 'Checking',
+    disconnected: 'PC unreachable',
+  }[streamStatus];
+
+  const errorRow = error ? (
+    <View style={styles.errorRow}>
+      <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
+      <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
+        {error}
+      </ThemedText>
+    </View>
+  ) : null;
+
+  const updateRow = updateInfo ? (
+    <PressableScale
+      onPress={() => router.push('/update')}
+      accessibilityLabel={`Update available: version ${updateInfo.version}`}
+      style={styles.errorRow}>
+      <Glyph set="mci" name="cellphone-arrow-down" size={17} color={theme.accent} />
+      <ThemedText type="body" style={styles.errorText}>
+        {`Version ${updateInfo.version} is available`}
+      </ThemedText>
+      <Glyph name="chevron-forward" size={14} color={theme.inkFaint} />
+    </PressableScale>
+  ) : null;
+
+  let header: ReactElement | undefined;
+  if (error || updateRow) {
+    header = (
+      <View>
+        {errorRow}
+        {updateRow}
+      </View>
+    );
+  }
+
+  let empty: ReactElement | undefined;
+  if (!error) {
+    empty = searching ? (
+      <ThemedText type="body" style={[styles.emptyText, { color: theme.inkMuted }]}>
+        No matching projects or sessions
+      </ThemedText>
+    ) : (
+      <View style={styles.empty}>
+        <ThemedText type="body" style={{ color: theme.inkMuted }}>
+          No sessions yet
+        </ThemedText>
+        <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+          Start one in OpenCode on your PC — it shows up here.
+        </ThemedText>
+      </View>
+    );
+  }
 
   return (
     <ThemedView style={styles.screen}>
@@ -680,58 +745,25 @@ export default function HomeScreen() {
               colors={[theme.accent]}
             />
           }
-          ListHeaderComponent={
-            error || updateInfo ? (
-              <View>
-                {error ? (
-                  <View style={styles.errorRow}>
-                    <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
-                    <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
-                      {error}
-                    </ThemedText>
-                  </View>
-                ) : null}
-                {updateInfo ? (
-                  <PressableScale
-                    onPress={() => router.push('/update')}
-                    accessibilityLabel={`Update available: version ${updateInfo.version}`}
-                    style={styles.errorRow}>
-                    <Glyph set="mci" name="cellphone-arrow-down" size={17} color={theme.accent} />
-                    <ThemedText type="body" style={styles.errorText}>
-                      {`Version ${updateInfo.version} is available`}
-                    </ThemedText>
-                    <Glyph name="chevron-forward" size={14} color={theme.inkFaint} />
-                  </PressableScale>
-                ) : null}
-              </View>
-            ) : undefined
-          }
-          ListFooterComponent={
-            <PressableScale
-              onPress={() => router.push('/update')}
-              scaleTo={0.98}
-              accessibilityLabel="App version and updates"
-              style={styles.footer}>
-              <ThemedText type="caption" themeColor="inkFaint">
-                {installedVersionCode() > 0
-                  ? `OpenCode Remote ${installedVersion()} (${installedVersionCode()})`
-                  : 'OpenCode Remote — web preview'}
-              </ThemedText>
-            </PressableScale>
-          }
-          renderItem={({ item }) =>
-            item.kind === 'section' ? (
-              <SectionHead title={item.title} />
-            ) : item.kind === 'project' ? (
-              <ProjectRow
-                group={item.group}
-                expanded={item.expanded}
-                last={item.last}
-                onToggle={() =>
-                  setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
-                }
-              />
-            ) : (
+          ListHeaderComponent={header}
+          ListFooterComponent={<FooterLink />}
+          renderItem={({ item }) => {
+            if (item.kind === 'section') {
+              return <SectionHead title={item.title} />;
+            }
+            if (item.kind === 'project') {
+              return (
+                <ProjectRow
+                  group={item.group}
+                  expanded={item.expanded}
+                  last={item.last}
+                  onToggle={() =>
+                    setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
+                  }
+                />
+              );
+            }
+            return (
               <SessionRow
                 title={item.title}
                 hint={item.hint}
@@ -750,26 +782,9 @@ export default function HomeScreen() {
                   })
                 }
               />
-            )
-          }
-          ListEmptyComponent={
-            !error ? (
-              searching ? (
-                <ThemedText type="body" style={[styles.emptyText, { color: theme.inkMuted }]}>
-                  No matching projects or sessions
-                </ThemedText>
-              ) : (
-                <View style={styles.empty}>
-                  <ThemedText type="body" style={{ color: theme.inkMuted }}>
-                    No sessions yet
-                  </ThemedText>
-                  <ThemedText type="caption" style={{ color: theme.inkFaint }}>
-                    Start one in OpenCode on your PC — it shows up here.
-                  </ThemedText>
-                </View>
-              )
-            ) : undefined
-          }
+            );
+          }}
+          ListEmptyComponent={empty}
         />
       )}
     </ThemedView>

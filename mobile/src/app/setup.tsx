@@ -12,7 +12,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -39,6 +39,9 @@ import { useConnection } from '@/lib/connection';
 
 const PAIR_COMMAND = 'opencode pair --remote --yes';
 const NATIVE = Platform.OS !== 'web';
+/** `https://host/…/auth/connect/<code>` — the shape the PC prints next to the QR. */
+const PAIRING_LINK_RE =
+  /^(https?:\/\/[^/\s]+)(?:(?:\/|[^\S\n\r\u2028\u2029])[^\n\r\u2028\u2029]*)?\/auth\/connect\/([^/?#\s]+)/;
 
 type Phase = 'idle' | 'connecting' | 'paired' | 'failed';
 
@@ -59,7 +62,9 @@ function parsePairingInput(raw: string): ParsedPairing | null {
     try {
       const obj = JSON.parse(text) as { code?: string; urls?: string[]; url?: string };
       if (obj.code) {
-        const urls = obj.urls && obj.urls.length > 0 ? obj.urls : obj.url ? [obj.url] : [];
+        let urls: string[] = [];
+        if (obj.urls && obj.urls.length > 0) urls = obj.urls;
+        else if (obj.url) urls = [obj.url];
         return { code: obj.code, urls };
       }
     } catch {
@@ -67,7 +72,7 @@ function parsePairingInput(raw: string): ParsedPairing | null {
     }
   }
 
-  const match = text.match(/^(https?:\/\/[^/\s]+).*\/auth\/connect\/([^/?#\s]+)/);
+  const match = PAIRING_LINK_RE.exec(text);
   if (match) return { code: match[2], urls: [match[1]] };
 
   return null;
@@ -144,6 +149,112 @@ function PairCommand() {
   );
 }
 
+/** The camera viewport — live preview once permitted, a request card otherwise. */
+function ScanContent({
+  granted,
+  cameraRef,
+  onScan,
+  onRequestPermission,
+}: Readonly<{
+  granted: boolean;
+  cameraRef: RefObject<CameraView | null>;
+  onScan: (data: string) => void;
+  onRequestPermission: () => void;
+}>) {
+  const theme = useTheme();
+  const quiet = { color: theme.inkMuted } as const;
+  return (
+    <View style={[styles.viewport, { backgroundColor: theme.inkWell, borderColor: theme.hairline }]}>
+      {granted ? (
+        <>
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={({ data }) => onScan(data)}
+          />
+          <ScanFrame />
+        </>
+      ) : (
+        <View style={styles.permission}>
+          <Glyph set="mci" name="camera-off" size={44} color={theme.inkFaint} />
+          <ThemedText type="callout" style={[quiet, styles.centerText]}>
+            Camera access is needed to read the pairing QR code. It is only ever used for that.
+          </ThemedText>
+          <Button variant="accent" onPress={onRequestPermission}>
+            Allow camera
+          </Button>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** The manual-entry block — paste field, actions, and the way back to scanning. */
+function ManualContent({
+  value,
+  focused,
+  onChangeText,
+  onFocus,
+  onBlur,
+  onPaste,
+  onConnect,
+  onSwitchToScan,
+}: Readonly<{
+  value: string;
+  focused: boolean;
+  onChangeText: (text: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  onPaste: () => void;
+  onConnect: () => void;
+  onSwitchToScan: () => void;
+}>) {
+  const theme = useTheme();
+  return (
+    <>
+      <TextInput
+        style={[
+          styles.input,
+          {
+            backgroundColor: theme.inkWell,
+            borderColor: focused ? theme.accent : 'transparent',
+            color: theme.ink,
+          },
+        ]}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        multiline
+        autoCapitalize="none"
+        autoCorrect={false}
+        accessibilityLabel="Pairing link"
+        placeholder="https://…/auth/connect/…"
+        placeholderTextColor={theme.inkFaint}
+        value={value}
+        onChangeText={onChangeText}
+      />
+
+      <View style={styles.buttonRow}>
+        <Button variant="secondary" onPress={onPaste} style={styles.flex}>
+          Paste
+        </Button>
+        <Button variant="accent" onPress={onConnect} disabled={!value.trim()} style={styles.flexWide}>
+          Connect
+        </Button>
+      </View>
+
+      {NATIVE ? (
+        <PressableScale onPress={onSwitchToScan} hitSlop={8}>
+          <ThemedText type="callout" style={{ color: theme.accent }}>
+            Scan a QR code instead
+          </ThemedText>
+        </PressableScale>
+      ) : null}
+    </>
+  );
+}
+
 // ---------- screen ----------
 
 export default function SetupScreen() {
@@ -195,12 +306,14 @@ export default function SetupScreen() {
           }, 900);
           return;
         } catch (err) {
-          const reason =
-            err instanceof UnreachableError
-              ? 'unreachable'
-              : err instanceof HttpError
-                ? `HTTP ${err.status === 0 ? 'error' : err.status}`
-                : 'failed';
+          let reason: string;
+          if (err instanceof UnreachableError) {
+            reason = 'unreachable';
+          } else if (err instanceof HttpError) {
+            reason = `HTTP ${err.status === 0 ? 'error' : err.status}`;
+          } else {
+            reason = 'failed';
+          }
           failures.push(`${baseUrl.replace(/^https?:\/\//, '')} (${reason})`);
         }
       }
@@ -305,6 +418,92 @@ export default function SetupScreen() {
 
   const quiet = { color: theme.inkMuted } as const;
 
+  let content: ReactNode;
+  if (phase === 'connecting') {
+    content = (
+      <>
+        <ActivityIndicator size="small" color={theme.inkMuted} />
+        <ThemedText type="callout" style={quiet}>
+          Pairing with your PC…
+        </ThemedText>
+      </>
+    );
+  } else if (phase === 'paired') {
+    content = (
+      <>
+        <Glyph set="mci" name="check-decagram" size={44} color={theme.positive} />
+        <ThemedText type="headline" style={styles.centerText}>
+          Paired with your PC
+        </ThemedText>
+      </>
+    );
+  } else if (phase === 'failed') {
+    content = (
+      <>
+        <Glyph name="warning-outline" size={44} color={theme.caution} />
+        <ThemedText type="callout" style={[quiet, styles.centerText]}>
+          {error}
+        </ThemedText>
+        <Button variant="accent" onPress={tryAgain}>
+          Try Again
+        </Button>
+      </>
+    );
+  } else if (mode === 'scan') {
+    content = (
+      <>
+        <ActivityIndicator size="small" color={theme.inkMuted} />
+        <ThemedText type="headline" style={styles.centerText}>
+          Looking for your PC…
+        </ThemedText>
+        <ThemedText type="callout" style={[quiet, styles.centerText]}>
+          Run this on your PC, then point the camera at the QR code it prints. Codes expire after 5
+          minutes.
+        </ThemedText>
+        <PairCommand />
+
+        <ScanContent
+          granted={permission?.granted === true}
+          cameraRef={cameraRef}
+          onScan={handleScan}
+          onRequestPermission={() => void requestPermission()}
+        />
+
+        <PressableScale onPress={() => changeMode('manual')} hitSlop={8}>
+          <ThemedText type="callout" style={{ color: theme.accent }}>
+            Enter the link manually instead
+          </ThemedText>
+        </PressableScale>
+      </>
+    );
+  } else {
+    content = (
+      <>
+        <ThemedText type="headline" style={styles.centerText}>
+          Paste the pairing link
+        </ThemedText>
+        <ThemedText type="callout" style={[quiet, styles.centerText]}>
+          It is printed next to the QR code on your PC. Codes expire after 5 minutes.
+        </ThemedText>
+        <PairCommand />
+
+        <ManualContent
+          value={manualText}
+          focused={inputFocused}
+          onChangeText={(t) => {
+            setManualText(t);
+            if (error) setError(null);
+          }}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
+          onPaste={() => void pasteFromClipboard()}
+          onConnect={handleManual}
+          onSwitchToScan={() => changeMode('scan')}
+        />
+      </>
+    );
+  }
+
   return (
     <ThemedView style={styles.screen}>
       {dismissable ? (
@@ -330,135 +529,7 @@ export default function SetupScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          <View style={styles.column}>
-            {phase === 'connecting' ? (
-              <>
-                <ActivityIndicator size="small" color={theme.inkMuted} />
-                <ThemedText type="callout" style={quiet}>
-                  Pairing with your PC…
-                </ThemedText>
-              </>
-            ) : phase === 'paired' ? (
-              <>
-                <Glyph set="mci" name="check-decagram" size={44} color={theme.positive} />
-                <ThemedText type="headline" style={styles.centerText}>
-                  Paired with your PC
-                </ThemedText>
-              </>
-            ) : phase === 'failed' ? (
-              <>
-                <Glyph name="warning-outline" size={44} color={theme.caution} />
-                <ThemedText type="callout" style={[quiet, styles.centerText]}>
-                  {error}
-                </ThemedText>
-                <Button variant="accent" onPress={tryAgain}>
-                  Try Again
-                </Button>
-              </>
-            ) : mode === 'scan' ? (
-              <>
-                <ActivityIndicator size="small" color={theme.inkMuted} />
-                <ThemedText type="headline" style={styles.centerText}>
-                  Looking for your PC…
-                </ThemedText>
-                <ThemedText type="callout" style={[quiet, styles.centerText]}>
-                  Run this on your PC, then point the camera at the QR code it prints. Codes
-                  expire after 5 minutes.
-                </ThemedText>
-                <PairCommand />
-
-                <View style={[styles.viewport, { backgroundColor: theme.inkWell, borderColor: theme.hairline }]}>
-                  {permission?.granted ? (
-                    <>
-                      <CameraView
-                        ref={cameraRef}
-                        style={StyleSheet.absoluteFill}
-                        facing="back"
-                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                        onBarcodeScanned={({ data }) => handleScan(data)}
-                      />
-                      <ScanFrame />
-                    </>
-                  ) : (
-                    <View style={styles.permission}>
-                      <Glyph set="mci" name="camera-off" size={44} color={theme.inkFaint} />
-                      <ThemedText type="callout" style={[quiet, styles.centerText]}>
-                        Camera access is needed to read the pairing QR code. It is only ever
-                        used for that.
-                      </ThemedText>
-                      <Button variant="accent" onPress={() => void requestPermission()}>
-                        Allow camera
-                      </Button>
-                    </View>
-                  )}
-                </View>
-
-                <PressableScale onPress={() => changeMode('manual')} hitSlop={8}>
-                  <ThemedText type="callout" style={{ color: theme.accent }}>
-                    Enter the link manually instead
-                  </ThemedText>
-                </PressableScale>
-              </>
-            ) : (
-              <>
-                <ThemedText type="headline" style={styles.centerText}>
-                  Paste the pairing link
-                </ThemedText>
-                <ThemedText type="callout" style={[quiet, styles.centerText]}>
-                  It is printed next to the QR code on your PC. Codes expire after 5 minutes.
-                </ThemedText>
-                <PairCommand />
-
-                <TextInput
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: theme.inkWell,
-                      borderColor: inputFocused ? theme.accent : 'transparent',
-                      color: theme.ink,
-                    },
-                  ]}
-                  onFocus={() => setInputFocused(true)}
-                  onBlur={() => setInputFocused(false)}
-                  multiline
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  accessibilityLabel="Pairing link"
-                  placeholder="https://…/auth/connect/…"
-                  placeholderTextColor={theme.inkFaint}
-                  value={manualText}
-                  onChangeText={(t) => {
-                    setManualText(t);
-                    if (error) setError(null);
-                  }}
-                />
-
-                <View style={styles.buttonRow}>
-                  <Button
-                    variant="secondary"
-                    onPress={() => void pasteFromClipboard()}
-                    style={styles.flex}>
-                    Paste
-                  </Button>
-                  <Button
-                    variant="accent"
-                    onPress={handleManual}
-                    disabled={!manualText.trim()}
-                    style={styles.flexWide}>
-                    Connect
-                  </Button>
-                </View>
-
-                {NATIVE ? (
-                  <PressableScale onPress={() => changeMode('scan')} hitSlop={8}>
-                    <ThemedText type="callout" style={{ color: theme.accent }}>
-                      Scan a QR code instead
-                    </ThemedText>
-                  </PressableScale>
-                ) : null}
-              </>
-            )}
-          </View>
+          <View style={styles.column}>{content}</View>
         </ScrollView>
       </KeyboardAvoidingView>
     </ThemedView>
