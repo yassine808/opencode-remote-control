@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.yassine808.opencoderemote",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": ["android.permission.REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
