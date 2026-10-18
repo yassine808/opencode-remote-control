@@ -9,7 +9,7 @@
 
 import { Image } from 'expo-image';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet } from 'react-native';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { PressableScale } from '@/components/ui';
@@ -73,6 +73,15 @@ export function MessageImage({ uri, label, align = 'left' }: Props) {
           onPress={() => setOpen(false)}
           accessibilityRole="button"
           accessibilityLabel="Close image">
+          <Image
+            source={{ uri }}
+            contentFit="cover"
+            blurRadius={50}
+            style={styles.blurred}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          />
+          <View pointerEvents="none" style={styles.dim} />
           <Image source={{ uri }} contentFit="contain" style={styles.full} />
           {label ? (
             <ThemedText type="caption" style={styles.caption}>
@@ -86,7 +95,24 @@ export function MessageImage({ uri, label, align = 'left' }: Props) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#0B0B0A' },
+  backdrop: { flex: 1, backgroundColor: '#0B0B0A', overflow: 'hidden' },
+  blurred: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    // Over-scaled so the blur kernel never exposes raw edges at the screen rim.
+    transform: [{ scale: 1.15 }],
+  },
+  dim: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(11, 11, 10, 0.5)',
+  },
   full: { flex: 1, margin: Space.betweenParts },
   caption: {
     position: 'absolute',
