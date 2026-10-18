@@ -54,7 +54,8 @@ export function describeError(err: unknown): string {
 // ---------- auth helpers ----------
 
 export function basicAuthHeader(token: string): string {
-  return `Basic ${b64encode(`opencode:${token}`)}`;
+  const credentials = `opencode:${token}`;
+  return `Basic ${b64encode(credentials)}`;
 }
 
 /** Tokens are `"<expiryUnixSeconds>.<signature>"` — read local expiry without a round-trip. */
@@ -67,7 +68,7 @@ export function tokenExpiresAt(token: string): number | null {
 }
 
 export function normalizeBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, '');
+  return url.trim().replace(/(^|[^/])\/+$/, '$1');
 }
 
 // ---------- client ----------

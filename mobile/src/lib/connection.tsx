@@ -28,13 +28,13 @@ const ConnectionContext = createContext<ConnectionContextValue | null>(null);
 
 let renewing = false;
 
-export function ConnectionProvider({ children }: { children: ReactNode }) {
+export function ConnectionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [ready, setReady] = useState(false);
   const [connection, setConnection] = useState<StoredConnection | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       const stored = await loadConnection();
       if (cancelled) return;
       setConnection(stored);

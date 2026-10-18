@@ -2,7 +2,7 @@
 
 export function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
+  return parts.at(-1) ?? path;
 }
 
 export function relativeTime(ms?: number | null): string {

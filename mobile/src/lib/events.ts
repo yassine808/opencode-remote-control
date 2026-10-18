@@ -33,7 +33,7 @@ export async function runEventStream(opts: EventStreamOptions): Promise<void> {
     opts.onStatus?.('disconnected');
     attempt += 1;
     const backoff = Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5));
-    await delay(backoff + Math.random() * 400, opts.signal);
+    await delay(backoff + Math.random() * 400, opts.signal); // NOSONAR — jitter needs no CSPRNG; retry loop is sequential by design
   }
   opts.onStatus?.('disconnected');
 }

@@ -3,7 +3,21 @@
 /** 137439 → "137,439" */
 export function fmtInt(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const s = String(Math.round(n));
+  let out = '';
+  let digits = 0;
+  for (let i = s.length - 1; i >= 0; i -= 1) {
+    const ch = s[i];
+    if (ch >= '0' && ch <= '9') {
+      digits += 1;
+      const comma = digits % 3 === 0 && i > 0 && /[A-Za-z0-9_]/.test(s[i - 1]);
+      out = comma ? `,${ch}${out}` : `${ch}${out}`;
+    } else {
+      digits = 0;
+      out = `${ch}${out}`;
+    }
+  }
+  return out;
 }
 
 /** 0.0042 → "<$0.01", 0 → "$0.00", 1.5 → "$1.50" */
