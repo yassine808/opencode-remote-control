@@ -19,6 +19,7 @@ import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { ToolPart } from '@/lib/types';
 import { basename } from '@/lib/paths';
+import { kindOfTool } from '@/lib/tool-meta';
 
 const COLLAPSED_LINES = 12;
 
@@ -89,6 +90,7 @@ function CodePreview({ code }: { code: string }) {
 export function ToolBlock({ part }: { part: ToolPart }) {
   const theme = useTheme();
 
+  const kind = kindOfTool(part.name);
   const status = part.state.status;
   const running = status === 'running' || status === 'pending';
   const errored = status === 'error' || !!part.state.error;
@@ -136,10 +138,10 @@ export function ToolBlock({ part }: { part: ToolPart }) {
           )
         ) : sawRunning ? (
           <PopIn from={0.3}>
-            <Glyph name="checkmark-circle-outline" size={13} color={theme.positive} />
+            <Glyph set={kind.set} name={kind.icon} size={13} color={theme.inkMuted} />
           </PopIn>
         ) : (
-          <Glyph name="checkmark-circle-outline" size={13} color={theme.inkMuted} />
+          <Glyph set={kind.set} name={kind.icon} size={13} color={theme.inkMuted} />
         )}
         <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
           {titleFor(part)}

@@ -18,17 +18,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Composer, type Attachment } from '@/components/composer';
+import { ActivityGroup, type GroupItem } from '@/components/activity-group';
 import { ContextButton, ContextSheet, type ContextStats } from '@/components/context-sheet';
 import { MessageImage } from '@/components/message-image';
 import { FadeRise, ND } from '@/components/motion';
 import { ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
-import { ReasoningBlock } from '@/components/reasoning';
+import { QuestionCard } from '@/components/question-card';
 import { RichText } from '@/components/rich-text';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { ToolBlock } from '@/components/tool-block';
 import { Glyph, PressableScale } from '@/components/ui';
 import { WorkingIndicator } from '@/components/working-indicator';
 import { Radius, Space } from '@/constants/theme';
@@ -108,6 +108,8 @@ type RowBase =
   | { kind: 'image'; id: string; uri: string; label?: string }
   | { kind: 'reasoning'; id: string; text: string; active: boolean }
   | { kind: 'tool'; id: string; part: ToolPart }
+  | { kind: 'question'; id: string; part: ToolPart }
+  | { kind: 'group'; id: string; items: GroupItem[]; active: boolean }
   | { kind: 'error'; id: string; text: string }
   | { kind: 'caption'; id: string; text: string };
 
@@ -184,7 +186,7 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
           }
         } else if (part.type === 'tool') {
           push({
-            kind: 'tool',
+            kind: (part as ToolPart).name === 'question' ? 'question' : 'tool',
             id: (part as ToolPart).id || `${message.id}-x${i}`,
             part: part as ToolPart,
           });
@@ -220,6 +222,50 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
   }
 
   return rows;
+}
+
+/**
+ * Fold each run of reasoning + tool rows into one collapsible group
+ * ("2 commands, 3 thoughts, 1 read"). Text, questions, errors and user turns
+ * break a run.
+ */
+function groupRows(flat: Row[], running: boolean): Row[] {
+  const out: Row[] = [];
+  let run: Row[] = [];
+
+  const flush = (isLast: boolean) => {
+    if (run.length === 0) return;
+    const items: GroupItem[] = run.map((r) =>
+      r.kind === 'reasoning'
+        ? { kind: 'reasoning', id: r.id, text: r.text, active: r.active }
+        : { kind: 'tool', id: r.id, part: (r as Extract<Row, { kind: 'tool' }>).part },
+    );
+    const live = items.some((it) =>
+      it.kind === 'reasoning'
+        ? it.active
+        : it.part.state.status === 'running' || it.part.state.status === 'pending',
+    );
+    out.push({
+      kind: 'group',
+      id: `grp-${run[0].id}`,
+      items,
+      active: live || (running && isLast),
+      padTop: run[0].padTop,
+      mid: run[0].mid,
+    });
+    run = [];
+  };
+
+  flat.forEach((row, i) => {
+    if (row.kind === 'reasoning' || row.kind === 'tool') {
+      run.push(row);
+    } else {
+      flush(false);
+      out.push(row);
+    }
+    if (i === flat.length - 1) flush(true);
+  });
+  return out;
 }
 
 // ---------- todos from the agent's todowrite/todoread calls ----------
@@ -296,6 +342,8 @@ function activityFor(rows: Row[]): string {
       return 'Thinking';
     case 'text':
       return 'Writing';
+    case 'question':
+      return 'Waiting for your answer';
     case 'tool': {
       const name = last.part.name;
       if (TOOL_ACTIVITY[name]) return TOOL_ACTIVITY[name];
@@ -801,9 +849,10 @@ export default function SessionScreen() {
     [api, sessionID, sessionInfo?.model],
   );
 
-  const rows = useMemo(() => buildRows(messages, running), [messages, running]);
+  const flatRows = useMemo(() => buildRows(messages, running), [messages, running]);
+  const rows = useMemo(() => groupRows(flatRows, running), [flatRows, running]);
   const todos = useMemo(() => extractTodos(messages), [messages]);
-  const activity = useMemo(() => activityFor(rows), [rows]);
+  const activity = useMemo(() => activityFor(flatRows), [flatRows]);
 
   const currentModel = sessionInfo?.model ?? null;
 
@@ -1005,10 +1054,10 @@ export default function SessionScreen() {
                     </View>
                   ) : row.kind === 'text' ? (
                     <RichText text={row.text} />
-                  ) : row.kind === 'reasoning' ? (
-                    <ReasoningBlock text={row.text} isActive={row.active} />
-                  ) : row.kind === 'tool' ? (
-                    <ToolBlock part={row.part} />
+                  ) : row.kind === 'group' ? (
+                    <ActivityGroup items={row.items} active={row.active} />
+                  ) : row.kind === 'question' ? (
+                    <QuestionCard part={row.part} />
                   ) : row.kind === 'error' ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Glyph name="warning-outline" size={13} color={theme.negative} />

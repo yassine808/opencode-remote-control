@@ -440,7 +440,7 @@ export function BreathingBorder({
     <Animated.View
       pointerEvents="none"
       style={{
-        ...StyleSheet.absoluteFill,
+        ...StyleSheet.absoluteFillObject,
         borderRadius: radius,
         borderWidth: width,
         borderColor: color,
@@ -463,6 +463,7 @@ export function ProgressRing({
   color,
   trackColor,
   duration = 900,
+  animated = true,
   children,
 }: {
   progress: number;
@@ -471,14 +472,17 @@ export function ProgressRing({
   color: string;
   trackColor: string;
   duration?: number;
+  /** false → no sweep: the ring just shows the value */
+  animated?: boolean;
   children?: ReactNode;
 }) {
   const reduce = useReduceMotion();
-  const [p] = useState(() => new Animated.Value(0));
+  const clamp = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  const [p] = useState(() => new Animated.Value(animated ? 0 : clamp(progress)));
 
   useEffect(() => {
-    const target = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
-    if (reduce) {
+    const target = clamp(progress);
+    if (reduce || !animated) {
       p.setValue(target);
       return;
     }
@@ -490,7 +494,7 @@ export function ProgressRing({
     });
     anim.start();
     return () => anim.stop();
-  }, [progress, reduce, duration, p]);
+  }, [progress, reduce, animated, duration, p]);
 
   const half = size / 2;
   // A half-ring's coloured arc spans −45°…135°; turning it by r shows the arc

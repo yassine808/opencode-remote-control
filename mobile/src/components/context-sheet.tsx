@@ -418,7 +418,8 @@ export function ContextButton({
   onPress: () => void;
 }) {
   const theme = useTheme();
-  const color = usageColor(theme, usage);
+  // Plain white progress, no motion.
+  const color = theme.scheme === 'dark' ? '#FFFFFF' : theme.ink;
   const pct = usage == null ? null : Math.round(usage * 100);
 
   return (
@@ -434,6 +435,7 @@ export function ContextButton({
         size={28}
         stroke={3}
         color={color}
+        animated={false}
         trackColor={withAlpha(theme.scheme === 'dark' ? '#F4F0EC' : '#141413', 0.14)}>
         {pct != null ? (
           <ThemedText
@@ -450,7 +452,6 @@ export function ContextButton({
           </ThemedText>
         ) : null}
       </ProgressRing>
-      {running ? <SpinnerRing size={36} stroke={2} color={theme.clay} /> : null}
     </PressableScale>
   );
 }
