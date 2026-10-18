@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import { Animated, View } from 'react-native';
 
-import { FadeRise, Sweep, WaveText, useLoop, withAlpha } from '@/components/motion';
+import { WaveText, useLoop } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, useReduceMotion } from '@/components/ui';
 import { Fonts } from '@/constants/theme';
@@ -116,7 +116,6 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
   }, []);
 
   const elapsed = now - since;
-  const note = escalationNote(elapsed);
 
   return (
     <View
@@ -126,7 +125,7 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, alignSelf: 'flex-start' }}>
       <ActivityIcon activity={activity || 'Working'} />
 
-      <View style={{ gap: 6 }}>
+      <View>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
           <WaveText
             text={activity || 'Working'}
@@ -139,25 +138,6 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
             {fmtElapsed(elapsed)}
           </ThemedText>
         </View>
-
-        <View
-          style={{
-            width: 148,
-            height: 2,
-            borderRadius: 1,
-            overflow: 'hidden',
-            backgroundColor: theme.inkControl,
-          }}>
-          <Sweep color={withAlpha(theme.clay, 0.95)} duration={1600} bandWidth={0.4} />
-        </View>
-
-        {note ? (
-          <FadeRise key={note} distance={4} duration={260}>
-            <ThemedText type="caption" style={{ color: theme.inkMuted }}>
-              {note}
-            </ThemedText>
-          </FadeRise>
-        ) : null}
       </View>
     </View>
   );

@@ -1,7 +1,16 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -271,6 +280,8 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
     }
 
     if (message.type === 'idle') continue; // no divider lines — turn end is spacing
+    // Notices the server injects for the model (e.g. "shell finished") — not part of the chat.
+    if (message.type === 'synthetic') continue;
 
     const generic = message as GenericMessage;
     const label =
@@ -456,6 +467,27 @@ function latestTokens(messages: MessageInfo[]): ContextStats['tokens'] {
 
 const PAGE_SIZE = 60;
 
+// ---------- scroll anchoring (web has no native one for FlatList) ----------
+
+type CellReport = (key: string, y: number, h: number) => void;
+const CellLayoutContext = createContext<CellReport | null>(null);
+
+/** A list cell that reports where it sits, so the view can stay anchored to what is being read. */
+function MeasuredCell(props: any) {
+  const report = useContext(CellLayoutContext);
+  const { onLayout, cellKey, item, index, ...rest } = props;
+  return (
+    <View
+      {...rest}
+      onLayout={(e) => {
+        onLayout?.(e);
+        const l = e.nativeEvent.layout;
+        report?.(String(cellKey ?? item?.id ?? index), l.y, l.height);
+      }}
+    />
+  );
+}
+
 // ---------- small animated pieces ----------
 
 /** A row slides in once — never again when it is scrolled back into view. */
@@ -582,6 +614,11 @@ export default function SessionScreen() {
   const lastFollowRef = useRef(0);
   const followTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openingRef = useRef(true);
+  const layoutsRef = useRef(new Map<string, { y: number; h: number }>());
+  const anchorRef = useRef<{ key: string; delta: number } | null>(null);
+  const offsetRef = useRef(0);
+  const ignoreScrollUntil = useRef(0);
+  const restoreRaf = useRef<number | null>(null);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordedRef = useRef<string | null>(null);
   /** Messages present at first load — only newer ones animate in. */
@@ -1038,6 +1075,44 @@ export default function SessionScreen() {
     };
   }, [messages, models, currentModel, sessionInfo, running]);
 
+  /** Remember which row sits at the top of the screen, and how far into it we are. */
+  const recomputeAnchor = useCallback(() => {
+    const off = offsetRef.current;
+    for (const [key, l] of layoutsRef.current) {
+      if (l.y <= off && off < l.y + l.h) {
+        anchorRef.current = { key, delta: off - l.y };
+        return;
+      }
+    }
+    anchorRef.current = null;
+  }, []);
+
+  /**
+   * A row changed size or place. If the reader is away from the end, put the
+   * anchor row back where it was on screen — so text that reflows above (or
+   * rows that grow above) never moves what they are reading.
+   */
+  const reportCell = useCallback<CellReport>((key, y, h) => {
+    const prev = layoutsRef.current.get(key);
+    layoutsRef.current.set(key, { y, h });
+    if (Platform.OS !== 'web') return; // iOS/Android anchor natively
+    if (prev && prev.y === y && prev.h === h) return;
+    if (autoScrollRef.current || draggingRef.current || openingRef.current) return;
+    if (restoreRaf.current != null) return;
+    restoreRaf.current = requestAnimationFrame(() => {
+      restoreRaf.current = null;
+      const a = anchorRef.current;
+      const l = a ? layoutsRef.current.get(a.key) : undefined;
+      if (!a || !l) return;
+      const desired = l.y + a.delta;
+      if (Math.abs(desired - offsetRef.current) > 1) {
+        ignoreScrollUntil.current = Date.now() + 80;
+        offsetRef.current = desired;
+        listRef.current?.scrollToOffset({ offset: desired, animated: false });
+      }
+    });
+  }, []);
+
   /** New text while pinned to the end: glide there, at most a few times a second. */
   const followEnd = useCallback(() => {
     if (!autoScrollRef.current || draggingRef.current) return;
@@ -1176,6 +1251,7 @@ export default function SessionScreen() {
               </View>
             </View>
           ) : (
+            <CellLayoutContext.Provider value={reportCell}>
             <FlatList
               ref={listRef}
               data={rows}
@@ -1191,7 +1267,10 @@ export default function SessionScreen() {
               }}
               // Away from the end, whatever the reader is looking at stays put
               // while new text lands below (or content above changes height).
-              maintainVisibleContentPosition={pinned ? undefined : { minIndexForVisible: 0 }}
+              maintainVisibleContentPosition={
+                Platform.OS !== 'web' && !pinned ? { minIndexForVisible: 0 } : undefined
+              }
+              CellRendererComponent={MeasuredCell}
               initialNumToRender={Math.max(20, initialCountRef.current)}
               windowSize={21}
               onScrollBeginDrag={() => {
@@ -1221,6 +1300,8 @@ export default function SessionScreen() {
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
+                offsetRef.current = contentOffset.y;
+                if (Date.now() > ignoreScrollUntil.current) recomputeAnchor();
                 // Only the reader may un-pin (or re-pin) the view; our own glides
                 // and layout growth never do.
                 if (draggingRef.current) autoScrollRef.current = distance < 80;
@@ -1324,6 +1405,7 @@ export default function SessionScreen() {
                 </View>
               }
             />
+            </CellLayoutContext.Provider>
           )}
           <JumpButton visible={showJump && loaded} onPress={jumpToLatest} />
         </View>
