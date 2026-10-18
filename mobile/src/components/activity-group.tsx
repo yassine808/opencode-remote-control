@@ -21,7 +21,7 @@ import { THOUGHT, kindOfTool, plural, type Kind } from '@/lib/tool-meta';
 import type { ToolPart } from '@/lib/types';
 
 export type GroupItem =
-  | { kind: 'reasoning'; id: string; text: string; active: boolean }
+  | { kind: 'reasoning'; id: string; text: string; active: boolean; ms?: number }
   | { kind: 'tool'; id: string; part: ToolPart };
 
 function summarize(items: GroupItem[]): { kind: Kind; count: number }[] {
@@ -98,7 +98,7 @@ export function ActivityGroup({ items, active }: { items: GroupItem[]; active: b
           {items.map((item, i) => (
             <FadeRise key={item.id} delay={Math.min(i, 8) * 30} distance={6} duration={220}>
               {item.kind === 'reasoning' ? (
-                <ReasoningBlock text={item.text} isActive={item.active} />
+                <ReasoningBlock text={item.text} isActive={item.active} knownMs={item.ms} />
               ) : (
                 <ToolBlock part={item.part} />
               )}

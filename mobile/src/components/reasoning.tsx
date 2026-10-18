@@ -19,12 +19,22 @@ import { ND, Sweep, WaveText, curve, useLoop, withAlpha } from '@/components/mot
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale, useReduceMotion } from '@/components/ui';
 import { Fonts, Motion } from '@/constants/theme';
+import { fmtElapsed } from '@/lib/format';
 import { useTheme } from '@/hooks/use-theme';
 
 const LIVE_HEIGHT = 132;
 const EXPANDED_HEIGHT = 280;
 
-export function ReasoningBlock({ text, isActive }: { text: string; isActive: boolean }) {
+export function ReasoningBlock({
+  text,
+  isActive,
+  knownMs,
+}: {
+  text: string;
+  isActive: boolean;
+  /** duration from history (when this wasn't watched live) */
+  knownMs?: number;
+}) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const [expanded, setExpanded] = useState(false);
@@ -109,7 +119,9 @@ export function ReasoningBlock({ text, isActive }: { text: string; isActive: boo
 
   const seconds =
     startedAt == null || endedAt == null ? 0 : Math.max(0, Math.round((endedAt - startedAt) / 1000));
-  const settledLabel = seconds >= 1 ? `Thought for ${seconds}s` : 'Thought about it';
+  // Watched live → the live clock; opened from history → the recorded/estimated time.
+  const shownMs = seconds >= 1 ? seconds * 1000 : (knownMs ?? 0);
+  const settledLabel = `Thought for ${fmtElapsed(Math.max(1000, shownMs))}`;
 
   const bodyHeight = expanded ? (isActive ? LIVE_HEIGHT : EXPANDED_HEIGHT) : EXPANDED_HEIGHT;
 

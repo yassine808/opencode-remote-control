@@ -26,6 +26,7 @@ import { EffortSheet, ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
 import { QuestionCard } from '@/components/question-card';
+import { TurnFooter } from '@/components/turn-footer';
 import { RichText } from '@/components/rich-text';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -106,8 +107,9 @@ type RowBase =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'text'; id: string; text: string }
   | { kind: 'image'; id: string; uri: string; label?: string }
-  | { kind: 'reasoning'; id: string; text: string; active: boolean }
+  | { kind: 'reasoning'; id: string; text: string; active: boolean; ms?: number }
   | { kind: 'tool'; id: string; part: ToolPart }
+  | { kind: 'footer'; id: string; text: string; ms: number | null }
   | { kind: 'question'; id: string; part: ToolPart }
   | { kind: 'group'; id: string; items: GroupItem[]; active: boolean }
   | { kind: 'error'; id: string; text: string }
@@ -115,6 +117,43 @@ type RowBase =
 
 /** `mid` is the id of the message a row came from — what "was already there" is judged by. */
 type Row = RowBase & { padTop: number; mid: string };
+
+/**
+ * How long each reasoning part took. Uses the part's own timestamps when the
+ * server sent them; otherwise splits the message's time (minus tool time)
+ * across reasoning and text by length — close enough for "Thought for 12s".
+ */
+function estimateReasoningMs(msg: AssistantMessage, parts: TaggedPart[]): Map<number, number> {
+  const out = new Map<number, number>();
+  const span = (t?: { created?: number; completed?: number; start?: number; end?: number }) => {
+    const a = t?.start ?? t?.created;
+    const b = t?.end ?? t?.completed;
+    return a != null && b != null && b > a ? b - a : null;
+  };
+  let toolMs = 0;
+  let weight = 0;
+  const weights = new Map<number, number>();
+  parts.forEach((part, i) => {
+    if (part.type === 'tool') {
+      toolMs += span((part as ToolPart).time) ?? 0;
+    } else if (part.type === 'reasoning' || part.type === 'text') {
+      const own = span((part as { time?: never }).time);
+      if (part.type === 'reasoning' && own != null) out.set(i, own);
+      const w = String(part.text ?? '').length;
+      weights.set(i, w);
+      if (!(part.type === 'reasoning' && own != null)) weight += w;
+    }
+  });
+  const total = span(msg.time);
+  if (total == null || weight === 0) return out;
+  const remainder = Math.max(0, total - toolMs - [...out.values()].reduce((a, b) => a + b, 0));
+  parts.forEach((part, i) => {
+    if (part.type === 'reasoning' && !out.has(i)) {
+      out.set(i, (remainder * (weights.get(i) ?? 0)) / weight);
+    }
+  });
+  return out;
+}
 
 /**
  * Flatten messages into transcript rows.
@@ -126,6 +165,27 @@ type Row = RowBase & { padTop: number; mid: string };
 function buildRows(messages: MessageInfo[], running: boolean): Row[] {
   const rows: Row[] = [];
   let mid = '';
+
+  // One footer per prompt: copy + how long the whole turn took.
+  interface Turn {
+    mid: string;
+    start?: number;
+    end?: number;
+    texts: string[];
+  }
+  const turnRef: { cur: Turn | null } = { cur: null };
+  const flushTurn = () => {
+    const t = turnRef.cur;
+    turnRef.cur = null;
+    if (!t) return;
+    const text = t.texts.join('\n\n').trim();
+    if (!text) return;
+    const ms = t.start != null && t.end != null && t.end > t.start ? t.end - t.start : null;
+    const saved = mid;
+    mid = t.mid;
+    push({ kind: 'footer', id: `${t.mid}-footer`, text, ms });
+    mid = saved;
+  };
 
   const push = (row: RowBase) => {
     const prev = rows[rows.length - 1];
@@ -150,7 +210,9 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
   for (const message of messages) {
     mid = message.id;
     if (message.type === 'user') {
+      flushTurn();
       const user = message as UserMessage;
+      turnRef.cur = { mid: message.id, start: user.time?.created, texts: [] };
       const files = Array.isArray(user.files) ? user.files : [];
       files.forEach((file, i) => {
         const mime = typeof file?.mime === 'string' ? file.mime : '';
@@ -170,10 +232,18 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
     if (message.type === 'assistant') {
       const msg = message as AssistantMessage;
       const parts = (msg.content ?? []) as TaggedPart[];
+      const cur: Turn = turnRef.cur ?? { mid: message.id, texts: [] };
+      turnRef.cur = cur;
+      const endAt = msg.time?.completed ?? msg.time?.streamed ?? msg.time?.created;
+      if (endAt != null) cur.end = Math.max(cur.end ?? 0, endAt);
+      const reasoningMs = estimateReasoningMs(msg, parts);
       parts.forEach((part, i) => {
         if (part.type === 'text') {
           const text = String((part as TextPart).text ?? '');
-          if (text) push({ kind: 'text', id: `${message.id}-t${i}`, text });
+          if (text) {
+            push({ kind: 'text', id: `${message.id}-t${i}`, text });
+            cur.texts.push(text);
+          }
         } else if (part.type === 'reasoning') {
           const text = String(part.text ?? '');
           if (text) {
@@ -182,6 +252,7 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
               id: `${message.id}-r${i}`,
               text,
               active: false,
+              ms: reasoningMs.get(i),
             });
           }
         } else if (part.type === 'tool') {
@@ -215,6 +286,9 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
     });
   }
 
+  // The running turn gets its footer when it finishes.
+  if (!running) flushTurn();
+
   // A reasoning part is live only while it is the newest thing on screen.
   if (running && rows.length > 0) {
     const last = rows[rows.length - 1];
@@ -237,7 +311,7 @@ function groupRows(flat: Row[], running: boolean): Row[] {
     if (run.length === 0) return;
     const items: GroupItem[] = run.map((r) =>
       r.kind === 'reasoning'
-        ? { kind: 'reasoning', id: r.id, text: r.text, active: r.active }
+        ? { kind: 'reasoning', id: r.id, text: r.text, active: r.active, ms: r.ms }
         : { kind: 'tool', id: r.id, part: (r as Extract<Row, { kind: 'tool' }>).part },
     );
     const live = items.some((it) =>
@@ -331,7 +405,8 @@ const TOOL_ACTIVITY: Record<string, string> = {
   webfetch: 'Searching the web',
   websearch: 'Searching the web',
   task: 'Running a subagent',
-  todaywrite: 'Planning',
+  todowrite: 'Planning',
+  shell: 'Running a command',
 };
 
 function activityFor(rows: Row[]): string {
@@ -1098,6 +1173,8 @@ export default function SessionScreen() {
                     <RichText text={row.text} />
                   ) : row.kind === 'group' ? (
                     <ActivityGroup items={row.items} active={row.active} />
+                  ) : row.kind === 'footer' ? (
+                    <TurnFooter text={row.text} ms={row.ms} />
                   ) : row.kind === 'question' ? (
                     <QuestionCard part={row.part} />
                   ) : row.kind === 'error' ? (
