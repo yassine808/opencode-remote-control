@@ -22,7 +22,7 @@ import { ActivityGroup, type GroupItem } from '@/components/activity-group';
 import { ContextButton, ContextSheet, type ContextStats } from '@/components/context-sheet';
 import { MessageImage } from '@/components/message-image';
 import { FadeRise, ND } from '@/components/motion';
-import { ModelSheet } from '@/components/model-sheet';
+import { EffortSheet, ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
 import { QuestionCard } from '@/components/question-card';
@@ -404,7 +404,7 @@ function RowEnter({
   );
 }
 
-/** Appears when the reader has scrolled away from the newest turn. */
+/** Appears (bottom left) when the reader has scrolled away from the newest turn. */
 function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => void }) {
   const theme = useTheme();
   const [p] = useState(() => new Animated.Value(0));
@@ -425,24 +425,25 @@ function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => voi
       pointerEvents={visible ? 'auto' : 'none'}
       style={{
         position: 'absolute',
-        right: 16,
+        left: 16,
         bottom: 12,
         opacity: p.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' }),
         transform: [
           { translateY: p.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) },
-          { scale: p.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) },
+          { scale: p.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) },
         ],
       }}>
       <PressableScale
         onPress={onPress}
-        scaleTo={0.9}
+        scaleTo={0.94}
         accessibilityLabel="Jump to latest"
         style={{
-          width: 38,
-          height: 38,
-          borderRadius: 19,
+          flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'center',
+          gap: 6,
+          height: 36,
+          paddingHorizontal: 14,
+          borderRadius: 18,
           backgroundColor: theme.surfaceRaised,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.hairline,
@@ -452,7 +453,10 @@ function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => voi
           shadowRadius: 8,
           shadowOffset: { width: 0, height: 3 },
         }}>
-        <Glyph name="arrow-down" size={18} color={theme.ink} />
+        <Glyph name="arrow-down" size={15} color={theme.ink} />
+        <ThemedText type="callout" weight="semibold" style={{ color: theme.ink }}>
+          Jump to latest
+        </ThemedText>
       </PressableScale>
     </Animated.View>
   );
@@ -480,6 +484,7 @@ export default function SessionScreen() {
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const [effortSheetOpen, setEffortSheetOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -488,6 +493,10 @@ export default function SessionScreen() {
 
   const listRef = useRef<FlatList<Row>>(null);
   const autoScrollRef = useRef(true);
+  /** the reader's finger is on the list — only then may a scroll mean "I left the end" */
+  const draggingRef = useRef(false);
+  /** every row is rendered on first open, so the true end is measurable */
+  const initialCountRef = useRef(0);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordedRef = useRef<string | null>(null);
   /** Messages present at first load — only newer ones animate in. */
@@ -707,13 +716,17 @@ export default function SessionScreen() {
   useEffect(() => {
     if (!loaded) return;
     autoScrollRef.current = true;
-    const raf = requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
-    const settle = setTimeout(() => {
+    draggingRef.current = false;
+    setShowJump(false);
+    const toEnd = () => {
       if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
-    }, 150);
+    };
+    const raf = requestAnimationFrame(toEnd);
+    // late layout (fonts, code blocks, images) keeps moving the end — chase it
+    const timers = [100, 300, 700, 1400].map((ms) => setTimeout(toEnd, ms));
     return () => {
       cancelAnimationFrame(raf);
-      clearTimeout(settle);
+      timers.forEach(clearTimeout);
     };
   }, [loaded]);
 
@@ -851,6 +864,7 @@ export default function SessionScreen() {
 
   const flatRows = useMemo(() => buildRows(messages, running), [messages, running]);
   const rows = useMemo(() => groupRows(flatRows, running), [flatRows, running]);
+  if (initialCountRef.current === 0 && rows.length > 0) initialCountRef.current = rows.length;
   const todos = useMemo(() => extractTodos(messages), [messages]);
   const activity = useMemo(() => activityFor(flatRows), [flatRows]);
 
@@ -862,11 +876,24 @@ export default function SessionScreen() {
       (m) => m.id === currentModel.id && m.providerID === currentModel.providerID,
     );
     const name = info?.name ?? currentModel.id.split('/').pop() ?? currentModel.id;
-    // `default` is the server's "no explicit effort" marker — don't render it.
-    const variant =
-      currentModel.variant && currentModel.variant !== 'default' ? currentModel.variant : null;
-    return variant ? `${name} · ${variant}` : name;
+    return name;
   }, [currentModel, models]);
+
+  const currentInfo = useMemo(
+    () =>
+      currentModel
+        ? (models?.find(
+            (m) => m.id === currentModel.id && m.providerID === currentModel.providerID,
+          ) ?? null)
+        : null,
+    [currentModel, models],
+  );
+  // The effort button exists only when this model has effort levels.
+  const effortLabel = useMemo(() => {
+    if (!currentInfo || !currentInfo.variants?.some((v) => v.id !== 'default')) return null;
+    const v = currentModel?.variant;
+    return v && v !== 'default' ? v : 'Default';
+  }, [currentInfo, currentModel]);
 
   const contextStats = useMemo<ContextStats>(() => {
     const info = currentModel
@@ -894,7 +921,9 @@ export default function SessionScreen() {
 
   const jumpToLatest = useCallback(() => {
     autoScrollRef.current = true;
+    draggingRef.current = false;
     listRef.current?.scrollToEnd({ animated: true });
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 350);
     setShowJump(false);
   }, []);
 
@@ -1008,14 +1037,27 @@ export default function SessionScreen() {
                 width: '100%',
                 alignSelf: 'center',
               }}
+              initialNumToRender={Math.max(20, initialCountRef.current)}
+              windowSize={21}
+              onScrollBeginDrag={() => {
+                draggingRef.current = true;
+              }}
+              onScrollEndDrag={() => {
+                // a fling keeps going after the finger lifts; momentum end clears it
+              }}
+              onMomentumScrollEnd={() => {
+                draggingRef.current = false;
+              }}
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
-                autoScrollRef.current = distance < 140;
-                const away = distance > 320;
+                // Only the reader may un-pin the view; programmatic jumps and
+                // layout growth never do (that was what left it mid-chat).
+                if (draggingRef.current) autoScrollRef.current = distance < 140;
+                const away = autoScrollRef.current ? false : distance > 320;
                 setShowJump((prev) => (prev === away ? prev : away));
               }}
-              scrollEventThrottle={100}
+              scrollEventThrottle={50}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => {
@@ -1130,6 +1172,11 @@ export default function SessionScreen() {
             disabled={!api}
             modelLabel={modelLabel}
             onModelPress={openModelSheet}
+            effortLabel={effortLabel}
+            onEffortPress={() => {
+              void loadModels();
+              setEffortSheetOpen(true);
+            }}
           />
         </View>
       </KeyboardAvoidingView>
@@ -1188,6 +1235,15 @@ export default function SessionScreen() {
         current={currentModel}
         busy={modelBusy}
         onClose={() => setModelSheetOpen(false)}
+        onPick={(model, variant) => void switchModel(model, variant)}
+      />
+
+      <EffortSheet
+        visible={effortSheetOpen}
+        model={currentInfo}
+        current={currentModel}
+        busy={modelBusy}
+        onClose={() => setEffortSheetOpen(false)}
         onPick={(model, variant) => void switchModel(model, variant)}
       />
 

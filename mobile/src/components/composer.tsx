@@ -54,6 +54,8 @@ export function Composer({
   disabled,
   modelLabel,
   onModelPress,
+  effortLabel,
+  onEffortPress,
   attachments,
   onAttachPress,
   onRemoveAttachment,
@@ -69,6 +71,9 @@ export function Composer({
   /** the session's current model (and effort) — rendered as the control-row pill */
   modelLabel?: string | null;
   onModelPress?: () => void;
+  /** effort level — pass null/undefined when the model has none and the button hides */
+  effortLabel?: string | null;
+  onEffortPress?: () => void;
   /** files staged for the next prompt */
   attachments?: Attachment[];
   onAttachPress?: () => void;
@@ -198,7 +203,7 @@ export function Composer({
             onPress={onModelPress}
             disabled={!onModelPress}
             scaleTo={0.96}
-            accessibilityLabel={`Change model and effort, currently ${modelLabel}`}
+            accessibilityLabel={`Change model, currently ${modelLabel}`}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -209,7 +214,7 @@ export function Composer({
               backgroundColor: theme.inkWell,
               borderWidth: 1,
               borderColor: theme.inkControl,
-              maxWidth: 220,
+              maxWidth: effortLabel ? 150 : 220,
             }}>
             <ThemedText
               type="caption"
@@ -218,6 +223,33 @@ export function Composer({
               {modelLabel}
             </ThemedText>
             <Glyph name="chevron-down" size={11} color={theme.inkFaint} />
+          </PressableScale>
+        ) : null}
+        {effortLabel ? (
+          <PressableScale
+            onPress={onEffortPress}
+            disabled={!onEffortPress}
+            scaleTo={0.96}
+            accessibilityLabel={`Change effort, currently ${effortLabel}`}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              height: 28,
+              paddingHorizontal: 10,
+              borderRadius: 14,
+              backgroundColor: theme.inkWell,
+              borderWidth: 1,
+              borderColor: theme.inkControl,
+              maxWidth: 110,
+            }}>
+            <Glyph set="mci" name="speedometer" size={13} color={theme.inkFaint} />
+            <ThemedText
+              type="caption"
+              numberOfLines={1}
+              style={{ color: theme.inkMuted, flexShrink: 1, textTransform: 'capitalize' }}>
+              {effortLabel}
+            </ThemedText>
           </PressableScale>
         ) : null}
         <View style={{ flex: 1 }} />

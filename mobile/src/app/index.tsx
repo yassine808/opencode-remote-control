@@ -197,6 +197,61 @@ function SectionHead({ title }: { title: string }) {
 }
 
 /**
+ * A running session's title, typed out like someone is writing it: types,
+ * holds, erases, repeats — with a blinking caret. Idle sessions render the
+ * plain title.
+ */
+function TypingTitle({ title, style }: { title: string; style?: any }) {
+  const reduce = useReduceMotion();
+  const theme = useTheme();
+  const [count, setCount] = useState(0);
+  const [caret, setCaret] = useState(true);
+
+  useEffect(() => {
+    if (reduce) {
+      setCount(title.length);
+      return;
+    }
+    let n = 0;
+    let dir: 1 | -1 = 1;
+    let hold = 0;
+    setCount(0);
+    const t = setInterval(() => {
+      if (hold > 0) {
+        hold -= 1;
+        return;
+      }
+      n += dir;
+      if (n >= title.length) {
+        n = title.length;
+        dir = -1;
+        hold = 12; // ~1s at the end of the line
+      } else if (n <= 0) {
+        n = 0;
+        dir = 1;
+        hold = 4;
+      }
+      setCount(n);
+    }, 80);
+    return () => clearInterval(t);
+  }, [title, reduce]);
+
+  useEffect(() => {
+    const t = setInterval(() => setCaret((c) => !c), 450);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <ThemedText type="body" numberOfLines={1} style={style}>
+      {title.slice(0, count)}
+      <ThemedText type="body" style={{ color: theme.clay, opacity: caret ? 1 : 0 }}>
+        ▌
+      </ThemedText>
+    </ThemedText>
+  );
+}
+
+/**
  * One conversation row. Nested rows lean on the project row above for
  * context; Recent rows carry the project as a quiet caption because their
  * neighbours come from different projects.
@@ -207,10 +262,13 @@ function SessionRow({
   indent,
   pinned,
   last,
+  running,
   onPress,
   onTogglePin,
 }: {
   title: string;
+  /** the agent is working in this session right now */
+  running?: boolean;
   hint?: string;
   indent?: boolean;
   /** Pinned rows carry a filled pin; tapping the glyph flips the state. */
@@ -234,9 +292,13 @@ function SessionRow({
             indent && styles.sessionRow,
             pressed && { backgroundColor: theme.inkControl },
           ]}>
-          <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
-            {title}
-          </ThemedText>
+          {running ? (
+            <TypingTitle title={title} style={styles.rowText} />
+          ) : (
+            <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
+              {title}
+            </ThemedText>
+          )}
           {hint ? (
             <ThemedText type="caption" numberOfLines={1} style={[styles.rowHint, { color: theme.inkFaint }]}>
               {hint}
@@ -285,6 +347,8 @@ export default function HomeScreen() {
   const [recents, setRecents] = useState<RecentSession[]>([]);
   /** Conversations the user pinned to the top of the launcher. */
   const [pinned, setPinned] = useState<PinnedSession[]>([]);
+  /** sessions whose agent is working right now */
+  const [activeIDs, setActiveIDs] = useState<Set<string>>(() => new Set());
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -293,6 +357,10 @@ export default function HomeScreen() {
       if (!api) return;
       if (!opts.silent) setRefreshing(true);
       try {
+        void api
+          .activeSessions()
+          .then((act) => setActiveIDs(new Set(Object.keys(act.data ?? {}))))
+          .catch(() => {});
         const list = await api.sessions(50);
         setSessions(
           [...list.data].sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0)),
@@ -343,7 +411,23 @@ export default function HomeScreen() {
           if (status === 'connected') scheduleReload();
         },
         onEvent: (event) => {
-          if (alive && LIST_REFRESH_EVENTS.has(event.type)) scheduleReload();
+          if (!alive) return;
+          const sid = (event.data as { sessionID?: string } | undefined)?.sessionID;
+          if (sid) {
+            if (event.type === 'session.execution.started') {
+              setActiveIDs((prev) => new Set(prev).add(sid));
+            } else if (
+              event.type === 'session.execution.succeeded' ||
+              event.type === 'session.execution.failed'
+            ) {
+              setActiveIDs((prev) => {
+                const next = new Set(prev);
+                next.delete(sid);
+                return next;
+              });
+            }
+          }
+          if (LIST_REFRESH_EVENTS.has(event.type)) scheduleReload();
         },
       });
 
@@ -581,6 +665,7 @@ export default function HomeScreen() {
       ) : (
         <FlatList
           data={rows}
+          extraData={activeIDs}
           keyExtractor={(row) => row.key}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
@@ -652,6 +737,7 @@ export default function HomeScreen() {
                 hint={item.hint}
                 indent={item.indent}
                 pinned={pinnedIDs.has(item.id)}
+                running={activeIDs.has(item.id)}
                 last={item.last}
                 onPress={() =>
                   router.push({ pathname: '/session/[id]', params: { id: item.id } })

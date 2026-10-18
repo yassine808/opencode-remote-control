@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { MessageImage } from '@/components/message-image';
+import { Terminal } from '@/components/terminal';
 import { PopIn, SpinnerRing, Sweep, withAlpha } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale } from '@/components/ui';
@@ -30,6 +31,11 @@ function titleFor(part: ToolPart): string {
     (typeof input.path === 'string' && input.path) ||
     (typeof input.pattern === 'string' && input.pattern) ||
     '';
+  if (part.name === 'bash' || part.name === 'shell') {
+    const d = typeof input.description === 'string' && input.description ? input.description : '';
+    const c = typeof input.command === 'string' ? input.command.split('\n')[0] : '';
+    return `${part.name} · ${d || c}`.trim();
+  }
   return path ? `${part.name} · ${basename(path)}` : part.name;
 }
 
@@ -91,6 +97,8 @@ export function ToolBlock({ part }: { part: ToolPart }) {
   const theme = useTheme();
 
   const kind = kindOfTool(part.name);
+  const isShell = part.name === 'bash' || part.name === 'shell';
+  const [shellOpen, setShellOpen] = useState(false);
   const status = part.state.status;
   const running = status === 'running' || status === 'pending';
   const errored = status === 'error' || !!part.state.error;
@@ -113,7 +121,12 @@ export function ToolBlock({ part }: { part: ToolPart }) {
 
   return (
     <View style={{ gap: 6 }}>
-      <View
+      <PressableScale
+        onPress={isShell ? () => setShellOpen((o) => !o) : undefined}
+        disabled={!isShell}
+        scaleTo={0.98}
+        hitSlop={6}
+        accessibilityLabel={isShell ? `${shellOpen ? 'Hide' : 'Show'} terminal` : undefined}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -146,7 +159,12 @@ export function ToolBlock({ part }: { part: ToolPart }) {
         <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
           {titleFor(part)}
         </ThemedText>
-      </View>
+        {isShell ? (
+          <Glyph name={shellOpen ? 'chevron-up' : 'chevron-down'} size={11} color={theme.inkFaint} />
+        ) : null}
+      </PressableScale>
+
+      {isShell && shellOpen ? <Terminal part={part} /> : null}
 
       {images.map((block, i) => (
         <MessageImage

@@ -31,12 +31,12 @@ import { useTheme } from '@/hooks/use-theme';
 type Block =
   | { kind: 'paragraph'; lines: string[] }
   | { kind: 'heading'; level: number; text: string }
-  | { kind: 'code'; code: string }
+  | { kind: 'code'; code: string; lang: string }
   | { kind: 'list'; ordered: boolean; items: { depth: number; marker: string; text: string }[] }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'table'; header: string[]; rows: string[][] };
 
-const FENCE = /^```(\w*)\s*$/;
+const FENCE = /^```([\w+#.-]*)\s*$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
@@ -72,7 +72,7 @@ function parseBlocks(text: string): Block[] {
         i++;
       }
       if (i < lines.length) i++; // closing fence
-      blocks.push({ kind: 'code', code: body.join('\n') });
+      blocks.push({ kind: 'code', code: body.join('\n'), lang: (fence[1] || '').toLowerCase() });
       continue;
     }
 
@@ -149,6 +149,141 @@ function parseBlocks(text: string): Block[] {
   return blocks;
 }
 
+// ---------- CLI colours ----------
+
+/** The palette the opencode terminal UI paints markdown with. */
+interface Cli {
+  heading: string;
+  bold: string;
+  italic: string;
+  code: string;
+  link: string;
+  bullet: string;
+  quote: string;
+  strike: string;
+  // syntax
+  kw: string;
+  str: string;
+  num: string;
+  com: string;
+  fn: string;
+  type: string;
+  add: string;
+  del: string;
+  hunk: string;
+}
+
+function cliColors(theme: Palette): Cli {
+  const dark = theme.scheme === 'dark';
+  return dark
+    ? {
+        heading: '#9D7CD8', bold: '#F5A742', italic: '#E5C07B', code: '#7FD88F',
+        link: '#5C9CF5', bullet: '#5C9CF5', quote: '#E5C07B', strike: '#808080',
+        kw: '#C678DD', str: '#98C379', num: '#D19A66', com: '#6B7280',
+        fn: '#61AFEF', type: '#E5C07B', add: '#7FD88F', del: '#F07178', hunk: '#56B6C2',
+      }
+    : {
+        heading: '#7C3AED', bold: '#B45309', italic: '#A16207', code: '#15803D',
+        link: '#1D4ED8', bullet: '#1D4ED8', quote: '#A16207', strike: '#6B7280',
+        kw: '#9333EA', str: '#15803D', num: '#B45309', com: '#6B7280',
+        fn: '#1D4ED8', type: '#A16207', add: '#15803D', del: '#B91C1C', hunk: '#0E7490',
+      };
+}
+
+const KEYWORDS = new Set(
+  (
+    'abstract as async await break case catch class const continue declare def default del defer do elif else enum ' +
+    'except export extends false final finally fn for from func function go if impl implements import in interface is ' +
+    'lambda let loop match mod module mut namespace new nil none null of or package pass private protected pub public ' +
+    'raise readonly return self static struct super switch then this throw trait true try type typeof use val var ' +
+    'void while with yield and not echo exit fi done esac select set unset export local'
+  ).split(' '),
+);
+
+const HASH_COMMENT = new Set(['sh', 'bash', 'zsh', 'shell', 'console', 'py', 'python', 'rb', 'ruby', 'yaml', 'yml', 'toml', 'dockerfile', 'makefile', 'ini', 'conf', 'r', 'pl', 'perl', 'ps1', 'powershell', '']);
+const DASH_COMMENT = new Set(['sql', 'lua', 'hs', 'haskell']);
+
+function highlight(code: string, lang: string, c: Cli, base: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const comment = DASH_COMMENT.has(lang)
+    ? '--[^\n]*'
+    : HASH_COMMENT.has(lang)
+      ? '#[^\n]*|//[^\n]*'
+      : '\\/\\/[^\n]*';
+  const re = new RegExp(
+    `(\\/\\*[\\s\\S]*?\\*\\/|${comment})` + // 1 comment
+      `|("(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])*'|` + '`(?:\\\\.|[^`\\\\])*`)' + // 2 string
+      `|(\\b0x[0-9a-fA-F]+\\b|\\b\\d+(?:\\.\\d+)?\\b)` + // 3 number
+      `|(\\b[A-Za-z_][A-Za-z0-9_]*\\b)(?=(\\())?`, // 4 word, 5 call
+    'g',
+  );
+  let last = 0;
+  let k = 0;
+  const push = (text: string, color: string) =>
+    out.push(
+      <Text key={k++} style={{ color }}>
+        {text}
+      </Text>,
+    );
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    if (m.index > last) push(code.slice(last, m.index), base);
+    const t = m[0];
+    if (m[1] != null) push(t, c.com);
+    else if (m[2] != null) push(t, c.str);
+    else if (m[3] != null) push(t, c.num);
+    else {
+      const w = m[4];
+      if (KEYWORDS.has(w)) push(t, c.kw);
+      else if (m[5]) push(t, c.fn);
+      else if (/^[A-Z][A-Za-z0-9_]*$/.test(w)) push(t, c.type);
+      else push(t, base);
+    }
+    last = m.index + t.length;
+    if (t.length === 0) re.lastIndex++;
+  }
+  if (last < code.length) push(code.slice(last), base);
+  return out;
+}
+
+function looksLikeDiff(code: string, lang: string): boolean {
+  if (lang === 'diff' || lang === 'patch') return true;
+  const lines = code.split('\n').filter((l) => l.trim());
+  return (
+    lines.length > 2 &&
+    lines.some((l) => /^@@ .* @@/.test(l)) &&
+    lines.every((l) => /^([+\- @\\]|diff |index |---|\+\+\+)/.test(l))
+  );
+}
+
+function renderDiff(code: string, c: Cli, base: string): ReactNode[] {
+  return code.split('\n').map((line, i, all) => {
+    let color = base;
+    let bg: string | undefined;
+    if (/^(\+\+\+|---|diff |index )/.test(line)) color = c.hunk;
+    else if (line.startsWith('@@')) color = c.hunk;
+    else if (line.startsWith('+')) {
+      color = c.add;
+      bg = withAlpha(c.add, 0.12);
+    } else if (line.startsWith('-')) {
+      color = c.del;
+      bg = withAlpha(c.del, 0.12);
+    }
+    return (
+      <Text key={i} style={{ color, backgroundColor: bg }}>
+        {line}
+        {i < all.length - 1 ? '\n' : ''}
+      </Text>
+    );
+  });
+}
+
+function withAlpha(hex: string, a: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
 // ---------- inline model ----------
 
 const INLINE =
@@ -177,7 +312,9 @@ function renderInline(
 
     if (token.startsWith('`')) {
       push(
-        <Text style={{ fontFamily: Fonts.mono, fontSize: 15, color: theme.ink }}>{token.slice(1, -1)}</Text>,
+        <Text style={{ fontFamily: Fonts.mono, fontSize: 15, color: cliColors(theme).code }}>
+          {token.slice(1, -1)}
+        </Text>,
       );
     } else if (token.startsWith('[')) {
       const link = token.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
@@ -185,7 +322,7 @@ function renderInline(
         const url = link[2];
         push(
           <Text
-            style={{ color: theme.accent, textDecorationLine: 'underline' }}
+            style={{ color: cliColors(theme).link, textDecorationLine: 'underline' }}
             onPress={() => {
               Linking.openURL(url).catch(() => {});
             }}>
@@ -197,13 +334,13 @@ function renderInline(
       }
     } else if (token.startsWith('**')) {
       push(
-        <Text style={{ fontFamily: Fonts.semibold }}>
+        <Text style={{ fontFamily: Fonts.semibold, color: cliColors(theme).bold }}>
           {renderInline(token.slice(2, -2), theme, `${keyPrefix}-b${key}`, true)}
         </Text>,
       );
     } else if (token.startsWith('~~')) {
       push(
-        <Text style={{ textDecorationLine: 'line-through' }}>
+        <Text style={{ textDecorationLine: 'line-through', color: cliColors(theme).strike }}>
           {renderInline(token.slice(2, -2), theme, `${keyPrefix}-s${key}`, bold)}
         </Text>,
       );
@@ -213,6 +350,7 @@ function renderInline(
         <Text
           style={{
             fontFamily: bold ? Fonts.semiboldItalic : Fonts.italic,
+            color: cliColors(theme).italic,
           }}>
           {renderInline(token.slice(1, -1), theme, `${keyPrefix}-i${key}`, bold)}
         </Text>,
@@ -242,8 +380,25 @@ function headingStyle(level: number): TextStyle {
 }
 
 /** A code well: mono, never wrapped, scrolls sideways. */
-export function CodeBlock({ code, style }: { code: string; style?: StyleProp<ViewStyle> }) {
+export function CodeBlock({
+  code,
+  lang = '',
+  style,
+}: {
+  code: string;
+  lang?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
   const theme = useTheme();
+  const c = cliColors(theme);
+  const body = useMemo(
+    () =>
+      looksLikeDiff(code, lang)
+        ? renderDiff(code, c, theme.ink)
+        : highlight(code, lang, c, theme.ink),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [code, lang, theme.scheme],
+  );
   return (
     <View style={[{ borderRadius: 12, backgroundColor: theme.inkWell, overflow: 'hidden' }, style]}>
       <ScrollView
@@ -257,7 +412,7 @@ export function CodeBlock({ code, style }: { code: string; style?: StyleProp<Vie
             lineHeight: 21,
             color: theme.ink,
           }}>
-          {code}
+          {body}
         </Text>
       </ScrollView>
     </View>
@@ -275,13 +430,14 @@ function renderBlock(block: Block, theme: Palette, keyPrefix: string): ReactNode
 
     case 'heading':
       return (
-        <Text style={[headingStyle(block.level), { color: theme.ink }]}>
+        <Text style={[headingStyle(block.level), { color: cliColors(theme).heading }]}>
+          {`${'#'.repeat(block.level)} `}
           {renderInline(block.text, theme, `${keyPrefix}-h`)}
         </Text>
       );
 
     case 'code':
-      return <CodeBlock code={block.code} />;
+      return <CodeBlock code={block.code} lang={block.lang} />;
 
     case 'list':
       return (
@@ -294,7 +450,7 @@ function renderBlock(block: Block, theme: Palette, keyPrefix: string): ReactNode
                 style={[
                   bodyText,
                   {
-                    color: theme.inkMuted,
+                    color: cliColors(theme).bullet,
                     width: block.ordered ? undefined : 18,
                     marginRight: block.ordered ? 6 : 0,
                   },
@@ -312,11 +468,11 @@ function renderBlock(block: Block, theme: Palette, keyPrefix: string): ReactNode
     case 'quote':
       return (
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ width: 2, borderRadius: 1, backgroundColor: theme.inkFaint }} />
+          <View style={{ width: 2, borderRadius: 1, backgroundColor: cliColors(theme).quote }} />
           <Text
             style={[
               bodyText,
-              { fontFamily: Fonts.italic, color: theme.inkMuted, flex: 1 },
+              { fontFamily: Fonts.italic, color: cliColors(theme).quote, flex: 1 },
             ]}>
             {renderInline(block.lines.join('\n'), theme, `${keyPrefix}-q`)}
           </Text>
