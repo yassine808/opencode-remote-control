@@ -10,7 +10,7 @@
 
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -136,6 +136,9 @@ export default function SetupScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { connect } = useConnection();
+  /** Opened from home (rather than the first-run redirect)? Then offer a way out. */
+  const { back } = useLocalSearchParams<{ back?: string }>();
+  const dismissable = back === '1';
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<'scan' | 'manual'>(NATIVE ? 'scan' : 'manual');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -242,6 +245,16 @@ export default function SetupScreen() {
 
   return (
     <ThemedView style={styles.screen}>
+      {dismissable ? (
+        <PressableScale
+          onPress={() => router.back()}
+          hitSlop={8}
+          scaleTo={0.9}
+          style={[styles.close, { top: insets.top + 4 }]}
+          accessibilityLabel="Close pairing">
+          <Glyph name="close" size={24} color={theme.inkMuted} />
+        </PressableScale>
+      ) : null}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -397,6 +410,15 @@ const FRAME = 28;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  close: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 2,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   flex: { flex: 1 },
   flexWide: { flex: 1.6 },
   content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 16 },

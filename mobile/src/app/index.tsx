@@ -492,10 +492,19 @@ export default function HomeScreen() {
 
   return (
     <ThemedView style={styles.screen}>
-      {/* nav — the wordmark, a status dot, nothing else */}
+      {/* nav — the scanner on the left, the wordmark, the status dot on the right */}
       <View style={{ paddingTop: insets.top }}>
         <View style={styles.navBar}>
           <BrandWordmark height={15} color={theme.ink} />
+        </View>
+        <View style={[styles.scanSlot, { top: insets.top }]}>
+          <PressableScale
+            onPress={() => router.push({ pathname: '/setup', params: { back: '1' } })}
+            accessibilityLabel="Scan QR code"
+            accessibilityHint="Pair or re-pair with your PC"
+            scaleTo={0.9}>
+            <Glyph set="mci" name="qrcode-scan" size={18} color={theme.inkMuted} />
+          </PressableScale>
         </View>
         <View style={[styles.dot, { top: insets.top }]}>
           <PressableScale
@@ -631,6 +640,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   navBar: { height: 44, alignItems: 'center', justifyContent: 'center' },
   dot: { position: 'absolute', right: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  scanSlot: { position: 'absolute', left: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },
   search: {
     flexDirection: 'row',
