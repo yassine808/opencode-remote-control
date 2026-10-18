@@ -440,7 +440,7 @@ export function BreathingBorder({
     <Animated.View
       pointerEvents="none"
       style={{
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         borderRadius: radius,
         borderWidth: width,
         borderColor: color,
