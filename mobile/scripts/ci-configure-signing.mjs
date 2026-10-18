@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const gradlePath = path.join('android', 'app', 'build.gradle');
-let src = fs.readFileSync(gradlePath, 'utf8').replace(/\r\n/g, '\n');
+let src = fs.readFileSync(gradlePath, 'utf8').replaceAll('\r\n', '\n');
 
 const signingAnchor = `    signingConfigs {
         debug {`;

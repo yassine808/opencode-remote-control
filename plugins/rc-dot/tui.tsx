@@ -3,6 +3,7 @@ import { Plugin } from "@opencode/plugin/tui"
 
 const TOKEN = ":49374"
 const ALLOW = /^(brave|chrome|code|msedge|firefox|opera|vivaldi|ngrok|opentunnel)$/
+const TASK_LINE = /^"([^"]+)","(\d+)"/
 
 function run(cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -29,7 +30,7 @@ async function isRcActive(): Promise<boolean> {
   const tasks = await run("tasklist /FO CSV /NH")
   const names = new Map<string, string>()
   for (const line of tasks.split(/\r?\n/)) {
-    const match = line.match(/^"([^"]+)","(\d+)"/)
+    const match = TASK_LINE.exec(line)
     if (match) names.set(match[2], match[1].replace(/\.exe$/i, "").toLowerCase())
   }
   for (const pid of pids) {

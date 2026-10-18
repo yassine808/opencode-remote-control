@@ -29,7 +29,9 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # No install script is needed for this build: the only dep with one
+        # (unrs-resolver) is lint-time tooling, and CI never lints.
+        run: npm ci --ignore-scripts
 
       - name: Generate Android project
         run: npx expo prebuild --platform android --no-install
