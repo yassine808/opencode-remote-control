@@ -103,3 +103,63 @@ export async function rememberRecentSession(entry: {
     // History is a convenience — never let it break opening a conversation.
   }
 }
+
+// ---------- pinned conversations ----------
+
+export interface PinnedSession {
+  id: string;
+  /** Title when it was pinned; the launcher prefers the live title when it has one. */
+  title?: string | null;
+  /** Project directory at pin time, for the launcher's caption. */
+  directory?: string | null;
+  pinnedAt: number;
+}
+
+const PINNED_KEY = 'ocrc.pinned.v1';
+
+export async function loadPinnedSessions(): Promise<PinnedSession[]> {
+  try {
+    const raw = webStorage
+      ? webStorage.getItem(PINNED_KEY)
+      : await SecureStore.getItemAsync(PINNED_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is PinnedSession =>
+        !!entry && typeof entry === 'object' && typeof (entry as PinnedSession).id === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Flip a conversation's pin — pinned ones lead the launcher, newest first. */
+export async function togglePinnedSession(entry: {
+  id: string;
+  title?: string | null;
+  directory?: string | null;
+}): Promise<void> {
+  try {
+    const previous = await loadPinnedSessions();
+    const next: PinnedSession[] = previous.some((p) => p.id === entry.id)
+      ? previous.filter((p) => p.id !== entry.id)
+      : [
+          {
+            id: entry.id,
+            title: entry.title ?? null,
+            directory: entry.directory ?? null,
+            pinnedAt: Date.now(),
+          },
+          ...previous,
+        ];
+    const raw = JSON.stringify(next);
+    if (webStorage) {
+      webStorage.setItem(PINNED_KEY, raw);
+      return;
+    }
+    await SecureStore.setItemAsync(PINNED_KEY, raw);
+  } catch {
+    // Pinning is a convenience — never let it break the launcher.
+  }
+}

@@ -38,7 +38,13 @@ import { confirmAction } from '@/lib/confirm';
 import { useConnection } from '@/lib/connection';
 import { runEventStream, type StreamStatus } from '@/lib/events';
 import { basename } from '@/lib/paths';
-import { loadRecentSessions, type RecentSession } from '@/lib/storage';
+import {
+  loadPinnedSessions,
+  loadRecentSessions,
+  togglePinnedSession,
+  type PinnedSession,
+  type RecentSession,
+} from '@/lib/storage';
 import type { SessionInfo } from '@/lib/types';
 
 const LIST_REFRESH_EVENTS = new Set([
@@ -193,37 +199,62 @@ function SessionRow({
   title,
   hint,
   indent,
+  pinned,
   last,
   onPress,
+  onTogglePin,
 }: {
   title: string;
   hint?: string;
   indent?: boolean;
+  /** Pinned rows carry a filled pin; tapping the glyph flips the state. */
+  pinned?: boolean;
   last: boolean;
   onPress: () => void;
+  onTogglePin?: () => void;
 }) {
   const theme = useTheme();
   return (
     <View>
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={hint ? `${title}, ${hint}` : title}
-        style={({ pressed }) => [
-          styles.row,
-          indent && styles.sessionRow,
-          pressed && { backgroundColor: theme.inkControl },
-        ]}>
-        <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
-          {title}
-        </ThemedText>
-        {hint ? (
-          <ThemedText type="caption" numberOfLines={1} style={[styles.rowHint, { color: theme.inkFaint }]}>
-            {hint}
+      {/* The pin is a sibling of the row press, never a button inside one —
+          nested buttons are invalid on web, and the two press areas fight. */}
+      <View style={styles.sessionContainer}>
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={hint ? `${title}, ${hint}` : title}
+          style={({ pressed }) => [
+            styles.sessionPress,
+            indent && styles.sessionRow,
+            pressed && { backgroundColor: theme.inkControl },
+          ]}>
+          <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
+            {title}
           </ThemedText>
+          {hint ? (
+            <ThemedText type="caption" numberOfLines={1} style={[styles.rowHint, { color: theme.inkFaint }]}>
+              {hint}
+            </ThemedText>
+          ) : null}
+          <Glyph name="chevron-forward" size={12} color={theme.inkFaint} />
+        </Pressable>
+        {onTogglePin ? (
+          <PressableScale
+            onPress={onTogglePin}
+            hitSlop={8}
+            scaleTo={0.85}
+            style={styles.pinButton}
+            accessibilityLabel={pinned ? 'Unpin conversation' : 'Pin conversation'}
+            accessibilityState={{ selected: !!pinned }}>
+            <Glyph
+              set="mci"
+              name={pinned ? 'pin' : 'pin-outline'}
+              size={14}
+              color={pinned ? theme.accent : theme.inkFaint}
+            />
+          </PressableScale>
         ) : null}
-        <Glyph name="chevron-forward" size={12} color={theme.inkFaint} />
-      </Pressable>
+      </View>
       {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
     </View>
   );
@@ -246,6 +277,8 @@ export default function HomeScreen() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   /** Conversations opened from this device, newest first (local history). */
   const [recents, setRecents] = useState<RecentSession[]>([]);
+  /** Conversations the user pinned to the top of the launcher. */
+  const [pinned, setPinned] = useState<PinnedSession[]>([]);
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -272,6 +305,10 @@ export default function HomeScreen() {
     setRecents(await loadRecentSessions());
   }, []);
 
+  const loadPinned = useCallback(async () => {
+    setPinned(await loadPinnedSessions());
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (!api) return;
@@ -280,6 +317,7 @@ export default function HomeScreen() {
 
       void load();
       void loadRecents();
+      void loadPinned();
 
       const scheduleReload = () => {
         if (reloadTimer.current) return;
@@ -316,7 +354,7 @@ export default function HomeScreen() {
           reloadTimer.current = null;
         }
       };
-    }, [api, load, loadRecents]),
+    }, [api, load, loadRecents, loadPinned]),
   );
 
   // Returning to the app is the moment a session started elsewhere (the
@@ -326,10 +364,19 @@ export default function HomeScreen() {
       if (phase === 'active') {
         void load({ silent: true });
         void loadRecents();
+        void loadPinned();
       }
     });
     return () => sub.remove();
-  }, [load, loadRecents]);
+  }, [load, loadRecents, loadPinned]);
+
+  const togglePin = useCallback(
+    async (entry: { id: string; title?: string | null; directory?: string | null }) => {
+      await togglePinnedSession(entry);
+      void loadPinned();
+    },
+    [loadPinned],
+  );
 
   const groups = useMemo(() => buildGroups(sessions ?? [], search), [sessions, search]);
 
@@ -351,14 +398,35 @@ export default function HomeScreen() {
     return map;
   }, [sessions]);
 
+  const pinnedIDs = useMemo(() => new Set(pinned.map((p) => p.id)), [pinned]);
+
   const rows = useMemo(() => {
     const out: Row[] = [];
 
+    // Pinned conversations lead — a deliberate choice outranks recency; a
+    // search narrows the list to matches only.
+    if (!searching && pinned.length > 0) {
+      out.push({ kind: 'section', key: 'sec:pinned', title: 'Pinned' });
+      pinned.forEach((entry, i) => {
+        const fresh = sessionByID.get(entry.id);
+        const directory = fresh?.location?.directory ?? entry.directory ?? '';
+        out.push({
+          kind: 'session',
+          key: `pinned:${entry.id}`,
+          id: entry.id,
+          title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
+          hint: basename(directory) || undefined,
+          last: i === pinned.length - 1,
+        });
+      });
+    }
+
     // Recents sit above the fold — continuing the last conversation stays
-    // the fastest path; a search narrows the list to matches only.
-    if (!searching && recents.length > 0) {
+    // the fastest path. Anything already pinned above would read as a double.
+    const unpinnedRecents = recents.filter((entry) => !pinnedIDs.has(entry.id));
+    if (!searching && unpinnedRecents.length > 0) {
       out.push({ kind: 'section', key: 'sec:recent', title: 'Recent' });
-      recents.forEach((entry, i) => {
+      unpinnedRecents.forEach((entry, i) => {
         const fresh = sessionByID.get(entry.id);
         const directory = fresh?.location?.directory ?? entry.directory ?? '';
         out.push({
@@ -367,7 +435,7 @@ export default function HomeScreen() {
           id: entry.id,
           title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
           hint: basename(directory) || undefined,
-          last: i === recents.length - 1,
+          last: i === unpinnedRecents.length - 1,
         });
       });
     }
@@ -393,7 +461,7 @@ export default function HomeScreen() {
       }
     }
     return out;
-  }, [groups, isExpanded, recents, searching, sessionByID]);
+  }, [groups, isExpanded, pinned, pinnedIDs, recents, searching, sessionByID]);
 
   const unpair = useCallback(async () => {
     const ok = await confirmAction({
@@ -520,9 +588,17 @@ export default function HomeScreen() {
                 title={item.title}
                 hint={item.hint}
                 indent={item.indent}
+                pinned={pinnedIDs.has(item.id)}
                 last={item.last}
                 onPress={() =>
                   router.push({ pathname: '/session/[id]', params: { id: item.id } })
+                }
+                onTogglePin={() =>
+                  void togglePin({
+                    id: item.id,
+                    title: item.title,
+                    directory: sessionByID.get(item.id)?.location?.directory,
+                  })
                 }
               />
             )
@@ -591,6 +667,16 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
   },
+  sessionContainer: { minHeight: 44, flexDirection: 'row', alignItems: 'center' },
+  sessionPress: {
+    flex: 1,
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  pinButton: { justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 12 },
   sessionRow: { paddingLeft: 16 + 22 },
   rowText: { flex: 1 },
   rowHint: { maxWidth: 160 },
