@@ -3,6 +3,9 @@
     "name": "OpenCode Remote",
     "slug": "opencode-remote",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "nativeVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "opencoderemote",
@@ -12,6 +15,7 @@
     },
     "android": {
       "package": "com.yassine808.opencoderemote",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
