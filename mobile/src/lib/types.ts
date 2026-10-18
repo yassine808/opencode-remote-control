@@ -107,6 +107,10 @@ export interface ReasoningPart {
 export interface ToolContentBlock {
   type: string;
   text?: string;
+  /** `type: "file"` blocks carry one file — images render inline. */
+  uri?: string;
+  mime?: string;
+  name?: string | null;
 }
 
 export interface ToolState {
@@ -133,12 +137,22 @@ export interface UnknownPart {
 
 export type MessagePart = TextPart | ReasoningPart | ToolPart | UnknownPart;
 
+/** A prompt attachment as stored on the message (validated against a live server). */
+export interface StoredFileAttachment {
+  /** Base64 payload, no `data:` prefix. */
+  data: string;
+  mime: string;
+  source?: { type?: string; uri?: string } & Record<string, unknown>;
+  name?: string | null;
+  description?: string | null;
+}
+
 export interface UserMessage {
   type: 'user';
   id: string;
   time?: MessageTime;
   text: string;
-  files?: unknown[];
+  files?: StoredFileAttachment[];
 }
 
 export interface AssistantMessage {

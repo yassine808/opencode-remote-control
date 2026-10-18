@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Composer } from '@/components/composer';
+import { MessageImage } from '@/components/message-image';
 import { ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
@@ -98,6 +99,7 @@ function upsertPart(
 type RowBase =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'text'; id: string; text: string }
+  | { kind: 'image'; id: string; uri: string; label?: string }
   | { kind: 'reasoning'; id: string; text: string; active: boolean }
   | { kind: 'tool'; id: string; part: ToolPart }
   | { kind: 'error'; id: string; text: string }
@@ -117,13 +119,39 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
 
   const push = (row: RowBase) => {
     const prev = rows[rows.length - 1];
-    const padTop = rows.length === 0 ? 0 : row.kind === 'user' || prev?.kind === 'user' ? 40 : 12;
+    let padTop = 0;
+    if (rows.length > 0) {
+      const userish = row.kind === 'user' || row.kind === 'image';
+      const prevUserish = prev?.kind === 'user' || prev?.kind === 'image';
+      // An image and its caption are one user turn — they stay tight — while
+      // any other user-side row (or the reply it opens) takes the turn gap.
+      const sameUserMessage =
+        prev != null && prevUserish && row.id.startsWith(prev.id.split('-img')[0]);
+      padTop =
+        userish || prevUserish
+          ? sameUserMessage
+            ? Space.betweenParts
+            : Space.betweenTurns
+          : Space.betweenParts;
+    }
     rows.push({ ...row, padTop });
   };
 
   for (const message of messages) {
     if (message.type === 'user') {
-      const text = String((message as UserMessage).text ?? '');
+      const user = message as UserMessage;
+      const files = Array.isArray(user.files) ? user.files : [];
+      files.forEach((file, i) => {
+        const mime = typeof file?.mime === 'string' ? file.mime : '';
+        if (!mime.startsWith('image/') || typeof file.data !== 'string' || !file.data) return;
+        push({
+          kind: 'image',
+          id: `${message.id}-img${i}`,
+          uri: `data:${mime};base64,${file.data}`,
+          label: typeof file.name === 'string' && file.name ? file.name : undefined,
+        });
+      });
+      const text = String(user.text ?? '');
       if (text) push({ kind: 'user', id: message.id, text });
       continue;
     }
@@ -774,7 +802,9 @@ export default function SessionScreen() {
               }
               renderItem={({ item: row }) => (
                 <View style={{ paddingTop: row.padTop }}>
-                  {row.kind === 'user' ? (
+                  {row.kind === 'image' ? (
+                    <MessageImage uri={row.uri} label={row.label} align="right" />
+                  ) : row.kind === 'user' ? (
                     <View
                       style={{
                         alignSelf: 'flex-end',

@@ -11,6 +11,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, ScrollView, View } from 'react-native';
 
+import { MessageImage } from '@/components/message-image';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale } from '@/components/ui';
 import { Fonts } from '@/constants/theme';
@@ -93,6 +94,14 @@ export function ToolBlock({ part }: { part: ToolPart }) {
 
   const preview = previewFor(part);
   const errorMessage = errored ? part.state.error?.message : undefined;
+  const images = (part.state.content ?? []).filter(
+    (block) =>
+      block.type === 'file' &&
+      typeof block.uri === 'string' &&
+      typeof block.mime === 'string' &&
+      block.mime.startsWith('image/') &&
+      (block.uri.startsWith('data:') || block.uri.startsWith('http')),
+  );
 
   return (
     <View style={{ gap: 6 }}>
@@ -108,6 +117,14 @@ export function ToolBlock({ part }: { part: ToolPart }) {
           {titleFor(part)}
         </ThemedText>
       </View>
+
+      {images.map((block, i) => (
+        <MessageImage
+          key={`${part.id}-img${i}`}
+          uri={String(block.uri)}
+          label={typeof block.name === 'string' ? block.name : undefined}
+        />
+      ))}
 
       {typeof errorMessage === 'string' && errorMessage.length > 0 ? (
         <ThemedText
