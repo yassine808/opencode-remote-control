@@ -78,6 +78,13 @@ function parsePairingInput(raw: string): ParsedPairing | null {
   return null;
 }
 
+/** Prefer the server's own rejection message — e.g. "Pairing link expired or already used". */
+function pairingFailureReason(err: HttpError): string {
+  const message = (err.body as { message?: unknown } | undefined)?.message;
+  if (err.status === 401 && typeof message === 'string' && message) return message;
+  return `HTTP ${err.status === 0 ? 'error' : err.status}`;
+}
+
 /** Corner brackets + a sweeping line over the camera feed. */
 function ScanFrame() {
   const reduce = useReduceMotion();
@@ -310,7 +317,7 @@ export default function SetupScreen() {
           if (err instanceof UnreachableError) {
             reason = 'unreachable';
           } else if (err instanceof HttpError) {
-            reason = `HTTP ${err.status === 0 ? 'error' : err.status}`;
+            reason = pairingFailureReason(err);
           } else {
             reason = 'failed';
           }

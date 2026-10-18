@@ -235,7 +235,13 @@ export async function exchangePairingCode(baseUrl: string, code: string): Promis
     throw new UnreachableError(baseUrl, err);
   }
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    const text = await res.text().catch(() => '');
+    let body: unknown;
+    try {
+      body = text ? JSON.parse(text) : undefined;
+    } catch {
+      body = text;
+    }
     throw new HttpError(res.status, body);
   }
   const json = (await res.json()) as { token?: string };
