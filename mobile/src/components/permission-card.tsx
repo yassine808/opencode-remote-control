@@ -86,9 +86,8 @@ export function PermissionCard({
   const queued = Math.max(0, total - index - 1);
   const scope = request.save?.length ? request.save : request.resources;
 
-  const caution50 = `${theme.caution}80`;
-
   const close = () => setConfirmAlways(false);
+  const btn = { flex: 1, paddingHorizontal: 8 } as const; // all buttons: same size
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={close}>
@@ -96,32 +95,32 @@ export function PermissionCard({
         <View
           style={{
             backgroundColor: theme.canvas,
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
-            padding: 20,
-            paddingBottom: 20 + insets.bottom,
-            gap: 16,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            paddingHorizontal: 20,
+            paddingTop: 20,
+            paddingBottom: 16 + insets.bottom,
+            gap: 14,
           }}>
-          {/* header */}
+          {/* title */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {high ? (
-              <Glyph name="warning" size={17} color={theme.caution} />
-            ) : (
-              <Glyph name="hand-left-outline" size={17} color={theme.inkMuted} />
-            )}
-            <ThemedText type="headline" style={{ color: theme.ink, flexShrink: 1 }}>
+            <Glyph
+              name={high ? 'warning' : 'shield-checkmark-outline'}
+              size={18}
+              color={high ? theme.caution : theme.inkMuted}
+            />
+            <ThemedText type="headline" style={{ color: theme.ink, flex: 1 }} numberOfLines={1}>
               {titleFor(request, high)}
             </ThemedText>
-            <View style={{ flex: 1 }} />
             {queued > 0 ? (
-              <ThemedText type="caption" style={{ color: theme.inkMuted }}>
-                {queued} more waiting
+              <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+                +{queued} waiting
               </ThemedText>
             ) : null}
           </View>
 
           {confirmAlways ? (
-            <ThemedText type="callout" style={{ color: theme.ink }}>
+            <ThemedText type="callout" style={{ color: theme.inkMuted }}>
               Allow every {request.action} like this until OpenCode restarts?
             </ThemedText>
           ) : (
@@ -129,46 +128,38 @@ export function PermissionCard({
               {/* the exact ask — mono, never wrapped */}
               <View
                 style={{
-                  backgroundColor: theme.surface,
-                  borderRadius: 12,
-                  borderWidth: high ? 1.5 : 1,
-                  borderColor: high ? caution50 : theme.hairline,
+                  backgroundColor: theme.inkWell,
+                  borderRadius: 10,
+                  borderLeftWidth: 3,
+                  borderLeftColor: high ? theme.caution : theme.clay,
                   overflow: 'hidden',
                 }}>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ padding: 14 }}>
-                  <ThemedText
-                    type="code"
-                    style={{ color: theme.ink, fontSize: 15, lineHeight: 20 }}>
+                  contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}>
+                  <ThemedText type="code" style={{ color: theme.ink, fontSize: 14, lineHeight: 20 }}>
                     {request.resources.join('\n')}
                   </ThemedText>
                 </ScrollView>
               </View>
-
-              <ThemedText type="footnote" style={{ color: theme.inkMuted }}>
-                “Always” allows {scope.join(', ')} for the rest of this session.
-              </ThemedText>
+              {!high ? (
+                <ThemedText type="caption" style={{ color: theme.inkFaint }} numberOfLines={2}>
+                  Always: {scope.join(', ')}
+                </ThemedText>
+              ) : null}
             </>
           )}
 
-          {/* actions */}
-          {!confirmAlways ? (
-            <>
-              <Button
-                variant="primary"
-                busy={busy}
-                disabled={busy}
-                onPress={() => onDecide('once')}>
-                Allow Once
-              </Button>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+          {/* actions — one row, equal buttons */}
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            {!confirmAlways ? (
+              <>
                 <Button
                   variant="secondary"
                   disabled={busy}
                   onPress={() => onDecide('reject')}
-                  style={{ flex: 1 }}>
+                  style={btn}>
                   Reject
                 </Button>
                 {!high ? (
@@ -176,26 +167,35 @@ export function PermissionCard({
                     variant="secondary"
                     disabled={busy}
                     onPress={() => setConfirmAlways(true)}
-                    style={{ flex: 1 }}>
+                    style={btn}>
                     Always
                   </Button>
                 ) : null}
-              </View>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="primary"
-                busy={busy}
-                disabled={busy}
-                onPress={() => onDecide('always')}>
-                Yes, allow always
-              </Button>
-              <Button variant="secondary" disabled={busy} onPress={close}>
-                Back
-              </Button>
-            </>
-          )}
+                <Button
+                  variant="primary"
+                  busy={busy}
+                  disabled={busy}
+                  onPress={() => onDecide('once')}
+                  style={btn}>
+                  Allow once
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" disabled={busy} onPress={close} style={btn}>
+                  Back
+                </Button>
+                <Button
+                  variant="primary"
+                  busy={busy}
+                  disabled={busy}
+                  onPress={() => onDecide('always')}
+                  style={btn}>
+                  Allow always
+                </Button>
+              </>
+            )}
+          </View>
         </View>
       </View>
     </Modal>

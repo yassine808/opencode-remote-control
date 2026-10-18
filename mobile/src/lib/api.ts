@@ -148,6 +148,11 @@ export class OpenCodeApi {
     return this.request<void>('POST', `/api/session/${sessionID}/model`, { model }, signal);
   }
 
+  /** Switch the session's agent (`build` / `plan`) for subsequent turns. */
+  switchAgent(sessionID: string, agent: string, signal?: AbortSignal) {
+    return this.request<void>('POST', `/api/session/${sessionID}/agent`, { agent }, signal);
+  }
+
   activeSessions(signal?: AbortSignal) {
     return this.request<ActiveSessionsResponse>('GET', '/api/session/active', undefined, signal);
   }
