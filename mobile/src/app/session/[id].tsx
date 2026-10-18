@@ -110,6 +110,23 @@ function upsertPart(
   });
 }
 
+/** Which agent an `agent-switched` message switched to — "Build" or "Plan" (or the agent's own name). */
+function switchedAgent(m: GenericMessage): string | null {
+  const pick = (v: unknown): string | null => {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      return pick(o.name) ?? pick(o.id) ?? pick(o.agent);
+    }
+    return null;
+  };
+  const raw =
+    pick(m.agent) ?? pick(m.to) ?? pick(m.name) ?? pick(m.mode) ?? pick(m.current) ?? pick(m.title) ?? pick(m.text);
+  if (!raw) return null;
+  const name = /plan/i.test(raw) ? 'plan' : /build/i.test(raw) ? 'build' : raw;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 // ---------- rows: parts, flattened across messages ----------
 
 /** `Omit` over a union collapses it, so build rows without padTop and add it on push. */
@@ -291,6 +308,13 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
           ? String(generic.text)
           : null;
     const slug = message.type.split('-').join(' ');
+    if (message.type === 'agent-switched') {
+      const agent = switchedAgent(generic);
+      if (agent) {
+        push({ kind: 'caption', id: message.id, text: `${slug} to ${agent} mode` });
+        continue;
+      }
+    }
     push({
       kind: 'caption',
       id: message.id,
@@ -891,6 +915,13 @@ export default function SessionScreen() {
     setSending(true);
     try {
       await api.prompt(sessionID, { text });
+      // Sending a prompt is the only thing that pulls the view to the newest turn.
+      autoScrollRef.current = true;
+      draggingRef.current = false;
+      openingRef.current = false;
+      setPinned(true);
+      setShowJump(false);
+      listRef.current?.scrollToEnd({ animated: true });
       setDraft('');
       setTurnStartedAt(Date.now());
       setRunning(true);
@@ -1300,11 +1331,29 @@ export default function SessionScreen() {
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
+                const prevOffset = offsetRef.current;
                 offsetRef.current = contentOffset.y;
-                if (Date.now() > ignoreScrollUntil.current) recomputeAnchor();
+                const programmatic = Date.now() <= ignoreScrollUntil.current;
+                if (!programmatic) recomputeAnchor();
                 // Only the reader may un-pin (or re-pin) the view; our own glides
                 // and layout growth never do.
-                if (draggingRef.current) autoScrollRef.current = distance < 80;
+                if (draggingRef.current) {
+                  autoScrollRef.current = distance < 80;
+                } else if (Platform.OS === 'web' && !programmatic) {
+                  // Mouse wheel / trackpad / scrollbar fire no drag events, so on
+                  // web, any move upward means the reader left the end. Our own
+                  // glides only ever move down.
+                  if (contentOffset.y < prevOffset - 2) {
+                    openingRef.current = false;
+                    if (followTimer.current) {
+                      clearTimeout(followTimer.current);
+                      followTimer.current = null;
+                    }
+                    autoScrollRef.current = false;
+                  } else if (distance < 80) {
+                    autoScrollRef.current = true;
+                  }
+                }
                 const away = autoScrollRef.current ? false : distance > 320;
                 setShowJump((prev) => (prev === away ? prev : away));
                 const nowPinned = autoScrollRef.current;
