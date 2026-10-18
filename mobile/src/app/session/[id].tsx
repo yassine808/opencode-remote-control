@@ -1,5 +1,3 @@
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
   createContext,
@@ -26,7 +24,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Composer, type Attachment } from '@/components/composer';
+import { Composer } from '@/components/composer';
 import { ActivityGroup, type GroupItem } from '@/components/activity-group';
 import { ContextButton, ContextSheet, type ContextStats } from '@/components/context-sheet';
 import { MessageImage } from '@/components/message-image';
@@ -42,7 +40,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Glyph, PressableScale } from '@/components/ui';
 import { WorkingIndicator } from '@/components/working-indicator';
-import { Radius, Space } from '@/constants/theme';
+import { Radius, Space, type Palette } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
 import { useConnection } from '@/lib/connection';
@@ -123,7 +121,9 @@ function switchedAgent(m: GenericMessage): string | null {
   const raw =
     pick(m.agent) ?? pick(m.to) ?? pick(m.name) ?? pick(m.mode) ?? pick(m.current) ?? pick(m.title) ?? pick(m.text);
   if (!raw) return null;
-  const name = /plan/i.test(raw) ? 'plan' : /build/i.test(raw) ? 'build' : raw;
+  let name = raw;
+  if (/plan/i.test(raw)) name = 'plan';
+  else if (/build/i.test(raw)) name = 'build';
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
@@ -166,7 +166,7 @@ function estimateReasoningMs(msg: AssistantMessage, parts: TaggedPart[]): Map<nu
     } else if (part.type === 'reasoning' || part.type === 'text') {
       const own = span((part as { time?: never }).time);
       if (part.type === 'reasoning' && own != null) out.set(i, own);
-      const w = String(part.text ?? '').length;
+      const w = (typeof part.text === 'string' ? part.text : '').length;
       weights.set(i, w);
       if (!(part.type === 'reasoning' && own != null)) weight += w;
     }
@@ -180,6 +180,88 @@ function estimateReasoningMs(msg: AssistantMessage, parts: TaggedPart[]): Map<nu
     }
   });
   return out;
+}
+
+/** The spacing ladder: 40pt between a turn and what follows, 12pt between parts. */
+function padTopFor(prev: Row | undefined, row: RowBase): number {
+  const userish = row.kind === 'user' || row.kind === 'image';
+  const prevUserish = prev?.kind === 'user' || prev?.kind === 'image';
+  // An image and its caption are one user turn — they stay tight — while
+  // any other user-side row (or the reply it opens) takes the turn gap.
+  const sameUserMessage =
+    prev != null && prevUserish && row.id.startsWith(prev.id.split('-img')[0]);
+  if (userish || prevUserish) {
+    return sameUserMessage ? Space.betweenParts : Space.betweenTurns;
+  }
+  return Space.betweenParts;
+}
+
+/** The rows one user message flattens to: its images, then its text. */
+function userRows(message: UserMessage): RowBase[] {
+  const out: RowBase[] = [];
+  const files = Array.isArray(message.files) ? message.files : [];
+  files.forEach((file, i) => {
+    const mime = typeof file?.mime === 'string' ? file.mime : '';
+    if (!mime.startsWith('image/') || typeof file.data !== 'string' || !file.data) return;
+    out.push({
+      kind: 'image',
+      id: `${message.id}-img${i}`,
+      uri: `data:${mime};base64,${file.data}`,
+      label: typeof file.name === 'string' && file.name ? file.name : undefined,
+    });
+  });
+  const text = String(message.text ?? '');
+  if (text) out.push({ kind: 'user', id: message.id, text });
+  return out;
+}
+
+/** The rows one assistant message flattens to; text parts also feed the turn's footer. */
+function assistantRows(msg: AssistantMessage, texts: string[]): RowBase[] {
+  const out: RowBase[] = [];
+  const parts = (msg.content ?? []) as TaggedPart[];
+  const reasoningMs = estimateReasoningMs(msg, parts);
+  parts.forEach((part, i) => {
+    if (part.type === 'text') {
+      const text = String((part as TextPart).text ?? '');
+      if (text) {
+        out.push({ kind: 'text', id: `${msg.id}-t${i}`, text });
+        texts.push(text);
+      }
+    } else if (part.type === 'reasoning') {
+      const text = typeof part.text === 'string' ? part.text : '';
+      if (text) {
+        out.push({
+          kind: 'reasoning',
+          id: `${msg.id}-r${i}`,
+          text,
+          active: false,
+          ms: reasoningMs.get(i),
+        });
+      }
+    } else if (part.type === 'tool') {
+      const tool = part as ToolPart;
+      out.push({
+        kind: tool.name === 'question' ? 'question' : 'tool',
+        id: tool.id || `${msg.id}-x${i}`,
+        part: tool,
+      });
+    }
+  });
+  if (msg.error?.message) out.push({ kind: 'error', id: `${msg.id}-err`, text: msg.error.message });
+  return out;
+}
+
+/** The single caption row a generic (non-chat) message flattens to. */
+function captionRow(message: GenericMessage): RowBase {
+  let label: string | null = null;
+  if (typeof message.title === 'string') label = message.title;
+  else if (typeof message.text === 'string') label = String(message.text);
+  const slug = message.type.replaceAll('-', ' ');
+  if (message.type === 'agent-switched') {
+    const agent = switchedAgent(message);
+    if (agent) return { kind: 'caption', id: message.id, text: `${slug} to ${agent} mode` };
+  }
+  return { kind: 'caption', id: message.id, text: label ? `${slug} — ${label}` : slug };
 }
 
 /**
@@ -215,22 +297,7 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
   };
 
   const push = (row: RowBase) => {
-    const prev = rows[rows.length - 1];
-    let padTop = 0;
-    if (rows.length > 0) {
-      const userish = row.kind === 'user' || row.kind === 'image';
-      const prevUserish = prev?.kind === 'user' || prev?.kind === 'image';
-      // An image and its caption are one user turn — they stay tight — while
-      // any other user-side row (or the reply it opens) takes the turn gap.
-      const sameUserMessage =
-        prev != null && prevUserish && row.id.startsWith(prev.id.split('-img')[0]);
-      padTop =
-        userish || prevUserish
-          ? sameUserMessage
-            ? Space.betweenParts
-            : Space.betweenTurns
-          : Space.betweenParts;
-    }
+    const padTop = rows.length > 0 ? padTopFor(rows.at(-1), row) : 0;
     rows.push({ ...row, padTop, mid });
   };
 
@@ -240,59 +307,17 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
       flushTurn();
       const user = message as UserMessage;
       turnRef.cur = { mid: message.id, start: user.time?.created, texts: [] };
-      const files = Array.isArray(user.files) ? user.files : [];
-      files.forEach((file, i) => {
-        const mime = typeof file?.mime === 'string' ? file.mime : '';
-        if (!mime.startsWith('image/') || typeof file.data !== 'string' || !file.data) return;
-        push({
-          kind: 'image',
-          id: `${message.id}-img${i}`,
-          uri: `data:${mime};base64,${file.data}`,
-          label: typeof file.name === 'string' && file.name ? file.name : undefined,
-        });
-      });
-      const text = String(user.text ?? '');
-      if (text) push({ kind: 'user', id: message.id, text });
+      userRows(user).forEach((row) => push(row));
       continue;
     }
 
     if (message.type === 'assistant') {
       const msg = message as AssistantMessage;
-      const parts = (msg.content ?? []) as TaggedPart[];
       const cur: Turn = turnRef.cur ?? { mid: message.id, texts: [] };
       turnRef.cur = cur;
       const endAt = msg.time?.completed ?? msg.time?.streamed ?? msg.time?.created;
       if (endAt != null) cur.end = Math.max(cur.end ?? 0, endAt);
-      const reasoningMs = estimateReasoningMs(msg, parts);
-      parts.forEach((part, i) => {
-        if (part.type === 'text') {
-          const text = String((part as TextPart).text ?? '');
-          if (text) {
-            push({ kind: 'text', id: `${message.id}-t${i}`, text });
-            cur.texts.push(text);
-          }
-        } else if (part.type === 'reasoning') {
-          const text = String(part.text ?? '');
-          if (text) {
-            push({
-              kind: 'reasoning',
-              id: `${message.id}-r${i}`,
-              text,
-              active: false,
-              ms: reasoningMs.get(i),
-            });
-          }
-        } else if (part.type === 'tool') {
-          push({
-            kind: (part as ToolPart).name === 'question' ? 'question' : 'tool',
-            id: (part as ToolPart).id || `${message.id}-x${i}`,
-            part: part as ToolPart,
-          });
-        }
-      });
-      if (msg.error?.message) {
-        push({ kind: 'error', id: `${message.id}-err`, text: msg.error.message });
-      }
+      assistantRows(msg, cur.texts).forEach((row) => push(row));
       continue;
     }
 
@@ -300,26 +325,7 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
     // Notices the server injects for the model (e.g. "shell finished") — not part of the chat.
     if (message.type === 'synthetic') continue;
 
-    const generic = message as GenericMessage;
-    const label =
-      typeof generic.title === 'string'
-        ? generic.title
-        : typeof generic.text === 'string'
-          ? String(generic.text)
-          : null;
-    const slug = message.type.split('-').join(' ');
-    if (message.type === 'agent-switched') {
-      const agent = switchedAgent(generic);
-      if (agent) {
-        push({ kind: 'caption', id: message.id, text: `${slug} to ${agent} mode` });
-        continue;
-      }
-    }
-    push({
-      kind: 'caption',
-      id: message.id,
-      text: label ? `${slug} — ${label}` : slug,
-    });
+    push(captionRow(message as GenericMessage));
   }
 
   // The running turn gets its footer when it finishes.
@@ -327,8 +333,8 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
 
   // A reasoning part is live only while it is the newest thing on screen.
   if (running && rows.length > 0) {
-    const last = rows[rows.length - 1];
-    if (last.kind === 'reasoning') last.active = true;
+    const last = rows.at(-1);
+    if (last?.kind === 'reasoning') last.active = true;
   }
 
   return rows;
@@ -378,6 +384,66 @@ function groupRows(flat: Row[], running: boolean): Row[] {
   return out;
 }
 
+/** One transcript cell per row kind. */
+function renderRow(row: Row, theme: Palette) {
+  if (row.kind === 'image') {
+    return <MessageImage uri={row.uri} label={row.label} align="right" />;
+  }
+  if (row.kind === 'user') {
+    return (
+      <View
+        style={{
+          alignSelf: 'flex-end',
+          marginLeft: Space.userInset,
+          backgroundColor: theme.surfaceRaised,
+          borderRadius: 12,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+        }}>
+        <ThemedText type="body" selectable>
+          {row.text}
+        </ThemedText>
+      </View>
+    );
+  }
+  if (row.kind === 'text') {
+    return <RichText text={row.text} />;
+  }
+  if (row.kind === 'group') {
+    return <ActivityGroup items={row.items} active={row.active} />;
+  }
+  if (row.kind === 'footer') {
+    return <TurnFooter text={row.text} ms={row.ms} />;
+  }
+  if (row.kind === 'question') {
+    return <QuestionCard part={row.part} />;
+  }
+  if (row.kind === 'error') {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Glyph name="warning-outline" size={13} color={theme.negative} />
+        <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
+          {row.text}
+        </ThemedText>
+      </View>
+    );
+  }
+  // Tool rows are folded into a group before render, so this is unreachable in
+  // practice — but spelling it out is what lets `row` narrow to the kinds below.
+  if (row.kind === 'tool') {
+    return null;
+  }
+  // 'caption' (and any straggler 'reasoning') render as the same quiet line.
+  return (
+    <ThemedText
+      type="caption"
+      numberOfLines={3}
+      style={{ color: theme.inkFaint, textAlign: 'center' }}>
+      {row.text}
+    </ThemedText>
+  );
+}
+
 // ---------- todos from the agent's todowrite/todoread calls ----------
 
 function normalizeTodos(value: unknown): TodoItem[] {
@@ -393,6 +459,26 @@ function normalizeTodos(value: unknown): TodoItem[] {
     }));
 }
 
+/** The todos a single todowrite/todoread call carries, if any. */
+function todosFromTool(tool: ToolPart): TodoItem[] {
+  const fromInput = normalizeTodos(tool.state.input?.todos);
+  if (fromInput.length) return fromInput;
+
+  const text = tool.state.content?.[0]?.text;
+  if (typeof text !== 'string') return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const direct = normalizeTodos(parsed);
+    if (direct.length) return direct;
+    if (parsed && typeof parsed === 'object') {
+      return normalizeTodos((parsed as Record<string, unknown>).todos);
+    }
+  } catch {
+    // not JSON — try the next candidate
+  }
+  return [];
+}
+
 function extractTodos(messages: MessageInfo[]): TodoItem[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -403,24 +489,8 @@ function extractTodos(messages: MessageInfo[]): TodoItem[] {
       if (part.type !== 'tool') continue;
       const tool = part as ToolPart;
       if (tool.name !== 'todowrite' && tool.name !== 'todoread') continue;
-
-      const fromInput = normalizeTodos(tool.state.input?.todos);
-      if (fromInput.length) return fromInput;
-
-      const text = tool.state.content?.[0]?.text;
-      if (typeof text === 'string') {
-        try {
-          const parsed: unknown = JSON.parse(text);
-          const direct = normalizeTodos(parsed);
-          if (direct.length) return direct;
-          if (parsed && typeof parsed === 'object') {
-            const nested = normalizeTodos((parsed as Record<string, unknown>).todos);
-            if (nested.length) return nested;
-          }
-        } catch {
-          // not JSON — try the next candidate
-        }
-      }
+      const found = todosFromTool(tool);
+      if (found.length) return found;
     }
   }
   return [];
@@ -446,7 +516,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
 };
 
 function activityFor(rows: Row[]): string {
-  const last = rows[rows.length - 1];
+  const last = rows.at(-1);
   if (!last) return 'Thinking';
   switch (last.kind) {
     case 'reasoning':
@@ -520,12 +590,12 @@ function RowEnter({
   animate,
   played,
   children,
-}: {
+}: Readonly<{
   id: string;
   animate: boolean;
   played: Set<string>;
   children: ReactNode;
-}) {
+}>) {
   useEffect(() => {
     played.add(id);
   }, [id, played]);
@@ -537,7 +607,7 @@ function RowEnter({
 }
 
 /** Appears (bottom left) when the reader has scrolled away from the newest turn. */
-function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => void }) {
+function JumpButton({ visible, onPress }: Readonly<{ visible: boolean; onPress: () => void }>) {
   const theme = useTheme();
   const [p] = useState(() => new Animated.Value(0));
 
@@ -591,6 +661,145 @@ function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => voi
         </ThemedText>
       </PressableScale>
     </Animated.View>
+  );
+}
+
+/** Web keeps the reader's row put while text lands below; native anchors itself. */
+function maintainVisiblePosition(pinned: boolean) {
+  return Platform.OS !== 'web' && !pinned ? { minIndexForVisible: 0 } : undefined;
+}
+
+/** Rows render on first open so the true end is measurable — remember that count once. */
+function captureInitialCount(ref: { current: number }, count: number) {
+  if (ref.current === 0 && count > 0) ref.current = count;
+}
+
+/** The list's trailing block: reconnect notice, exec errors, todos, working state. */
+function TranscriptFooter({
+  streamStatus,
+  execError,
+  todos,
+  running,
+  activity,
+  turnStartedAt,
+  rowsCount,
+}: Readonly<{
+  streamStatus: StreamStatus;
+  execError: string | null;
+  todos: TodoItem[];
+  running: boolean;
+  activity: string;
+  turnStartedAt: number;
+  rowsCount: number;
+}>) {
+  const theme = useTheme();
+  return (
+    <View style={{ gap: 12, marginTop: rowsCount > 0 ? 12 : 0 }}>
+      {streamStatus === 'disconnected' ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Glyph name="cloud-offline-outline" size={13} color={theme.inkMuted} />
+          <ThemedText type="callout" style={{ color: theme.inkMuted }}>
+            Reconnecting — updates may lag.
+          </ThemedText>
+        </View>
+      ) : null}
+
+      {execError ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Glyph name="warning-outline" size={13} color={theme.negative} />
+          <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
+            {execError}
+          </ThemedText>
+        </View>
+      ) : null}
+
+      {todos.length > 0 ? <PlanCard todos={todos} /> : null}
+
+      {running ? <WorkingIndicator activity={activity} since={turnStartedAt} /> : null}
+    </View>
+  );
+}
+
+/** Header chip that opens the to-do overlay; hidden when there are no todos. */
+function TodosChip({
+  summary,
+  onPress,
+}: Readonly<{
+  summary: { done: number; total: number; color: string; soft: string };
+  onPress: () => void;
+}>) {
+  if (summary.total === 0) return null;
+  return (
+    <FadeRise distance={0} duration={300}>
+      <PressableScale
+        onPress={onPress}
+        scaleTo={0.94}
+        hitSlop={10}
+        accessibilityLabel={`To-do list, ${summary.done} of ${summary.total} done`}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          height: 26,
+          paddingHorizontal: 9,
+          borderRadius: 13,
+          backgroundColor: summary.soft,
+        }}>
+        <Glyph set="mci" name="format-list-checks" size={13} color={summary.color} />
+        <ThemedText
+          type="caption"
+          weight="semibold"
+          style={{ color: summary.color, fontVariant: ['tabular-nums'] }}>
+          {summary.done}/{summary.total}
+        </ThemedText>
+      </PressableScale>
+    </FadeRise>
+  );
+}
+
+/** The to-do sheet over the transcript: a tap-away scrim plus the plan card. */
+function TodosOverlay({
+  visible,
+  todos,
+  top,
+  onClose,
+}: Readonly<{ visible: boolean; todos: TodoItem[]; top: number; onClose: () => void }>) {
+  const theme = useTheme();
+  if (!visible || todos.length === 0) return null;
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+      <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close to-do list" />
+      <FadeRise
+        distance={-10}
+        duration={260}
+        style={{
+          position: 'absolute',
+          top: top + 50,
+          right: 10,
+          width: 300,
+          maxWidth: '92%',
+          maxHeight: 420,
+        }}>
+        <View
+          style={{
+            maxHeight: 420,
+            borderRadius: Radius.block,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.hairline,
+            backgroundColor: theme.surface,
+            overflow: 'hidden',
+            elevation: 8,
+            shadowColor: '#000',
+            shadowOpacity: 0.25,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 8 },
+          }}>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <PlanCard todos={todos} />
+          </ScrollView>
+        </View>
+      </FadeRise>
+    </View>
   );
 }
 
@@ -726,7 +935,7 @@ export default function SessionScreen() {
                   } as AssistantMessage,
                 ],
           );
-          setTurnStartedAt((t) => (t ? t : Date.now()));
+          setTurnStartedAt((t) => t || Date.now());
           setRunning(true);
           break;
         }
@@ -1025,7 +1234,7 @@ export default function SessionScreen() {
 
   const flatRows = useMemo(() => buildRows(messages, running), [messages, running]);
   const rows = useMemo(() => groupRows(flatRows, running), [flatRows, running]);
-  if (initialCountRef.current === 0 && rows.length > 0) initialCountRef.current = rows.length;
+  captureInitialCount(initialCountRef, rows.length);
   const todos = useMemo(() => extractTodos(messages), [messages]);
   const activity = useMemo(() => activityFor(flatRows), [flatRows]);
 
@@ -1077,7 +1286,7 @@ export default function SessionScreen() {
   );
   // The effort button exists only when this model has effort levels.
   const effortLabel = useMemo(() => {
-    if (!currentInfo || !currentInfo.variants?.some((v) => v.id !== 'default')) return null;
+    if (!currentInfo?.variants?.some((v) => v.id !== 'default')) return null;
     const v = currentModel?.variant;
     return v && v !== 'default' ? v : 'Default';
   }, [currentInfo, currentModel]);
@@ -1186,11 +1395,21 @@ export default function SessionScreen() {
     const done = todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length;
     const active = todos.some((t) => t.status === 'in_progress');
     const allDone = total > 0 && done === total;
+    let color = theme.inkMuted;
+    let soft = theme.inkWell;
+    if (active) {
+      color = theme.clay;
+      soft = theme.claySoft;
+    }
+    if (allDone) {
+      color = theme.positive;
+      soft = theme.positiveSoft;
+    }
     return {
       total,
       done,
-      color: allDone ? theme.positive : active ? theme.clay : theme.inkMuted,
-      soft: allDone ? theme.positiveSoft : active ? theme.claySoft : theme.inkWell,
+      color,
+      soft,
     };
   }, [todos, theme]);
 
@@ -1228,32 +1447,7 @@ export default function SessionScreen() {
               {title}
             </ThemedText>
           </View>
-          {todos.length > 0 ? (
-            <FadeRise distance={0} duration={300}>
-              <PressableScale
-                onPress={() => setTodosOpen((v) => !v)}
-                scaleTo={0.94}
-                hitSlop={10}
-                accessibilityLabel={`To-do list, ${todoSummary.done} of ${todoSummary.total} done`}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                  height: 26,
-                  paddingHorizontal: 9,
-                  borderRadius: 13,
-                  backgroundColor: todoSummary.soft,
-                }}>
-                <Glyph set="mci" name="format-list-checks" size={13} color={todoSummary.color} />
-                <ThemedText
-                  type="caption"
-                  weight="semibold"
-                  style={{ color: todoSummary.color, fontVariant: ['tabular-nums'] }}>
-                  {todoSummary.done}/{todoSummary.total}
-                </ThemedText>
-              </PressableScale>
-            </FadeRise>
-          ) : null}
+          <TodosChip summary={todoSummary} onPress={() => setTodosOpen((v) => !v)} />
           {/* context ring — how full the window is; tap for the full ledger */}
           <ContextButton
             usage={contextStats.usage}
@@ -1298,9 +1492,7 @@ export default function SessionScreen() {
               }}
               // Away from the end, whatever the reader is looking at stays put
               // while new text lands below (or content above changes height).
-              maintainVisibleContentPosition={
-                Platform.OS !== 'web' && !pinned ? { minIndexForVisible: 0 } : undefined
-              }
+              maintainVisibleContentPosition={maintainVisiblePosition(pinned)}
               CellRendererComponent={MeasuredCell}
               initialNumToRender={Math.max(20, initialCountRef.current)}
               windowSize={21}
@@ -1380,78 +1572,20 @@ export default function SessionScreen() {
                       !baselineRef.current.has(row.mid) &&
                       !playedRef.current.has(row.id)
                     }>
-                  {row.kind === 'image' ? (
-                    <MessageImage uri={row.uri} label={row.label} align="right" />
-                  ) : row.kind === 'user' ? (
-                    <View
-                      style={{
-                        alignSelf: 'flex-end',
-                        marginLeft: Space.userInset,
-                        backgroundColor: theme.surfaceRaised,
-                        borderRadius: 12,
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                      }}>
-                      <ThemedText type="body" selectable>
-                        {row.text}
-                      </ThemedText>
-                    </View>
-                  ) : row.kind === 'text' ? (
-                    <RichText text={row.text} />
-                  ) : row.kind === 'group' ? (
-                    <ActivityGroup items={row.items} active={row.active} />
-                  ) : row.kind === 'footer' ? (
-                    <TurnFooter text={row.text} ms={row.ms} />
-                  ) : row.kind === 'question' ? (
-                    <QuestionCard part={row.part} />
-                  ) : row.kind === 'error' ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Glyph name="warning-outline" size={13} color={theme.negative} />
-                      <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
-                        {row.text}
-                      </ThemedText>
-                    </View>
-                  ) : (
-                    <ThemedText
-                      type="caption"
-                      numberOfLines={3}
-                      style={{ color: theme.inkFaint, textAlign: 'center' }}>
-                      {row.text}
-                    </ThemedText>
-                  )}
+                    {renderRow(row, theme)}
                   </RowEnter>
                 </View>
               )}
               ListFooterComponent={
-                <View
-                  style={{
-                    gap: 12,
-                    marginTop: rows.length > 0 ? 12 : 0,
-                  }}>
-                  {streamStatus === 'disconnected' ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Glyph name="cloud-offline-outline" size={13} color={theme.inkMuted} />
-                      <ThemedText type="callout" style={quiet}>
-                        Reconnecting — updates may lag.
-                      </ThemedText>
-                    </View>
-                  ) : null}
-
-                  {execError ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Glyph name="warning-outline" size={13} color={theme.negative} />
-                      <ThemedText type="callout" style={{ color: theme.negative, flexShrink: 1 }}>
-                        {execError}
-                      </ThemedText>
-                    </View>
-                  ) : null}
-
-                  {todos.length > 0 ? <PlanCard todos={todos} /> : null}
-
-                  {running ? (
-                    <WorkingIndicator activity={activity} since={turnStartedAt} />
-                  ) : null}
-                </View>
+                <TranscriptFooter
+                  streamStatus={streamStatus}
+                  execError={execError}
+                  todos={todos}
+                  running={running}
+                  activity={activity}
+                  turnStartedAt={turnStartedAt}
+                  rowsCount={rows.length}
+                />
               }
             />
             </CellLayoutContext.Provider>
@@ -1487,45 +1621,12 @@ export default function SessionScreen() {
       </KeyboardAvoidingView>
 
       {/* to-do list — the header chip expands it over the transcript */}
-      {todosOpen && todos.length > 0 ? (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={() => setTodosOpen(false)}
-            accessibilityLabel="Close to-do list"
-          />
-          <FadeRise
-            distance={-10}
-            duration={260}
-            style={{
-              position: 'absolute',
-              top: insets.top + 50,
-              right: 10,
-              width: 300,
-              maxWidth: '92%',
-              maxHeight: 420,
-            }}>
-            <View
-              style={{
-                maxHeight: 420,
-                borderRadius: Radius.block,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.hairline,
-                backgroundColor: theme.surface,
-                overflow: 'hidden',
-                elevation: 8,
-                shadowColor: '#000',
-                shadowOpacity: 0.25,
-                shadowRadius: 16,
-                shadowOffset: { width: 0, height: 8 },
-              }}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <PlanCard todos={todos} />
-              </ScrollView>
-            </View>
-          </FadeRise>
-        </View>
-      ) : null}
+      <TodosOverlay
+        visible={todosOpen}
+        todos={todos}
+        top={insets.top}
+        onClose={() => setTodosOpen(false)}
+      />
 
       <ContextSheet
         visible={contextOpen}
