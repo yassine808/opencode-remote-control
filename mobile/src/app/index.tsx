@@ -46,6 +46,12 @@ import {
   type RecentSession,
 } from '@/lib/storage';
 import type { SessionInfo } from '@/lib/types';
+import {
+  checkForUpdate,
+  installedVersion,
+  installedVersionCode,
+  type UpdateInfo,
+} from '@/lib/updater';
 
 const LIST_REFRESH_EVENTS = new Set([
   'session.renamed',
@@ -370,6 +376,25 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, [load, loadRecents, loadPinned]);
 
+  // One quiet GitHub check per launch; the row above the list only appears
+  // when a newer build exists.
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+
+  useEffect(() => {
+    // The installed versionCode is the comparand; the web preview has none,
+    // so it skips the check entirely.
+    if (installedVersionCode() <= 0) return;
+    let alive = true;
+    checkForUpdate()
+      .then((found) => {
+        if (alive) setUpdateInfo(found);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const togglePin = useCallback(
     async (entry: { id: string; title?: string | null; directory?: string | null }) => {
       await togglePinnedSession(entry);
@@ -571,14 +596,43 @@ export default function HomeScreen() {
             />
           }
           ListHeaderComponent={
-            error ? (
-              <View style={styles.errorRow}>
-                <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
-                <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
-                  {error}
-                </ThemedText>
+            error || updateInfo ? (
+              <View>
+                {error ? (
+                  <View style={styles.errorRow}>
+                    <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
+                    <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
+                      {error}
+                    </ThemedText>
+                  </View>
+                ) : null}
+                {updateInfo ? (
+                  <PressableScale
+                    onPress={() => router.push('/update')}
+                    accessibilityLabel={`Update available: version ${updateInfo.version}`}
+                    style={styles.errorRow}>
+                    <Glyph set="mci" name="cellphone-arrow-down" size={17} color={theme.accent} />
+                    <ThemedText type="body" style={styles.errorText}>
+                      {`Version ${updateInfo.version} is available`}
+                    </ThemedText>
+                    <Glyph name="chevron-forward" size={14} color={theme.inkFaint} />
+                  </PressableScale>
+                ) : null}
               </View>
             ) : undefined
+          }
+          ListFooterComponent={
+            <PressableScale
+              onPress={() => router.push('/update')}
+              scaleTo={0.98}
+              accessibilityLabel="App version and updates"
+              style={styles.footer}>
+              <ThemedText type="caption" themeColor="inkFaint">
+                {installedVersionCode() > 0
+                  ? `OpenCode Remote ${installedVersion()} (${installedVersionCode()})`
+                  : 'OpenCode Remote — web preview'}
+              </ThemedText>
+            </PressableScale>
           }
           renderItem={({ item }) =>
             item.kind === 'section' ? (
@@ -669,6 +723,7 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   errorText: { flex: 1 },
+  footer: { alignItems: 'center', paddingTop: 24 },
   sectionHead: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 6 },
   row: {
     minHeight: 44,
