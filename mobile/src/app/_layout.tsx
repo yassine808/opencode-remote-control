@@ -17,6 +17,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { StatusBar, useColorScheme } from 'react-native';
 
+import { AppLock } from '@/components/app-lock';
 import { Colors } from '@/constants/theme';
 import { ConnectionProvider } from '@/lib/connection';
 
@@ -65,13 +66,15 @@ export default function RootLayout() {
     <ThemeProvider value={navTheme}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <ConnectionProvider>
-        {/* Each screen draws its own header so title, status and actions sit together. */}
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: c.canvas },
-          }}
-        />
+        <AppLock>
+          {/* Each screen draws its own header so title, status and actions sit together. */}
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: c.canvas },
+            }}
+          />
+        </AppLock>
       </ConnectionProvider>
     </ThemeProvider>
   );
