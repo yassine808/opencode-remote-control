@@ -37,21 +37,115 @@ type Block =
   | { kind: 'table'; header: string[]; rows: string[][] };
 
 const FENCE = /^```([\w+#.-]*)\s*$/;
-const HEADING = /^(#{1,6})\s+(.*)$/;
-const BULLET = /^(\s*)[-*+]\s+(.*)$/;
-const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
+const HEADING = /^(#{1,6})[ \t]+(.*)$/;
+const BULLET = /^([ \t]*)[-*+][ \t]+(.*)$/;
+const ORDERED = /^([ \t]*)(\d+)[.)][ \t]+(.*)$/;
 const QUOTE = /^>\s?(.*)$/;
-const TABLE_SEP = /^\s*\|?[\s|:-]*-[\s|:-]*\|?\s*$/;
+const TABLE_SEP = /^[ \t|:-]*$/;
+
+/** A table separator row: only separator characters, at least one dash. */
+function isTableSep(line: string): boolean {
+  return TABLE_SEP.test(line) && line.includes('-');
+}
 
 function splitCells(line: string): string[] {
   const cells = line.split('|').map((c) => c.trim());
   if (cells.length > 0 && cells[0] === '') cells.shift();
-  if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+  if (cells.length > 0 && cells.at(-1) === '') cells.pop();
   return cells;
 }
 
+interface BlockParse {
+  block: Block;
+  next: number;
+}
+
+function startsNewBlock(line: string): boolean {
+  return (
+    line.trim() === '' ||
+    FENCE.test(line) ||
+    HEADING.test(line) ||
+    BULLET.test(line) ||
+    ORDERED.test(line) ||
+    QUOTE.test(line)
+  );
+}
+
+function parseFence(lines: string[], start: number): BlockParse {
+  const fence = FENCE.exec(lines[start]);
+  const body: string[] = [];
+  let i = start + 1;
+  while (i < lines.length && !FENCE.test(lines[i])) {
+    body.push(lines[i]);
+    i++;
+  }
+  if (i < lines.length) i++; // closing fence
+  return {
+    block: { kind: 'code', code: body.join('\n'), lang: (fence?.[1] || '').toLowerCase() },
+    next: i,
+  };
+}
+
+function parseList(lines: string[], start: number): BlockParse {
+  const items: { depth: number; marker: string; text: string }[] = [];
+  let ordered = false;
+  let i = start;
+  while (i < lines.length) {
+    const b = BULLET.exec(lines[i]);
+    const o = ORDERED.exec(lines[i]);
+    if (b) {
+      items.push({ depth: Math.floor(b[1].length / 2), marker: '•', text: b[2] });
+    } else if (o) {
+      ordered = true;
+      items.push({ depth: Math.floor(o[1].length / 2), marker: `${o[2]}.`, text: o[3] });
+    } else {
+      break;
+    }
+    i++;
+  }
+  return { block: { kind: 'list', ordered, items }, next: i };
+}
+
+function parseQuote(lines: string[], start: number): BlockParse {
+  const body: string[] = [];
+  let i = start;
+  while (i < lines.length) {
+    const q = QUOTE.exec(lines[i]);
+    if (!q) break;
+    body.push(q[1]);
+    i++;
+  }
+  return { block: { kind: 'quote', lines: body }, next: i };
+}
+
+function isTableStart(lines: string[], i: number): boolean {
+  const next = lines[i + 1];
+  return lines[i].includes('|') && next != null && isTableSep(next);
+}
+
+function parseTable(lines: string[], start: number): BlockParse {
+  const header = splitCells(lines[start]);
+  let i = start + 2;
+  const rows: string[][] = [];
+  while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+    rows.push(splitCells(lines[i]));
+    i++;
+  }
+  return { block: { kind: 'table', header, rows }, next: i };
+}
+
+function parseParagraph(lines: string[], start: number): BlockParse {
+  const body: string[] = [];
+  let i = start;
+  while (i < lines.length && !startsNewBlock(lines[i])) {
+    body.push(lines[i]);
+    i++;
+  }
+  return { block: { kind: 'paragraph', lines: body }, next: i };
+}
+
 function parseBlocks(text: string): Block[] {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
   const blocks: Block[] = [];
   let i = 0;
 
@@ -63,20 +157,14 @@ function parseBlocks(text: string): Block[] {
       continue;
     }
 
-    const fence = line.match(FENCE);
-    if (fence) {
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !FENCE.test(lines[i])) {
-        body.push(lines[i]);
-        i++;
-      }
-      if (i < lines.length) i++; // closing fence
-      blocks.push({ kind: 'code', code: body.join('\n'), lang: (fence[1] || '').toLowerCase() });
+    if (FENCE.test(line)) {
+      const { block, next } = parseFence(lines, i);
+      blocks.push(block);
+      i = next;
       continue;
     }
 
-    const heading = line.match(HEADING);
+    const heading = HEADING.exec(line);
     if (heading) {
       blocks.push({ kind: 'heading', level: heading[1].length, text: heading[2] });
       i++;
@@ -84,66 +172,30 @@ function parseBlocks(text: string): Block[] {
     }
 
     if (BULLET.test(line) || ORDERED.test(line)) {
-      const items: { depth: number; marker: string; text: string }[] = [];
-      let ordered = false;
-      while (i < lines.length) {
-        const b = lines[i].match(BULLET);
-        const o = lines[i].match(ORDERED);
-        if (b) {
-          items.push({ depth: Math.floor(b[1].length / 2), marker: '•', text: b[2] });
-        } else if (o) {
-          ordered = true;
-          items.push({ depth: Math.floor(o[1].length / 2), marker: `${o[2]}.`, text: o[3] });
-        } else {
-          break;
-        }
-        i++;
-      }
-      blocks.push({ kind: 'list', ordered, items });
+      const { block, next } = parseList(lines, i);
+      blocks.push(block);
+      i = next;
       continue;
     }
 
     if (QUOTE.test(line)) {
-      const body: string[] = [];
-      while (i < lines.length && QUOTE.test(lines[i])) {
-        body.push(lines[i].match(QUOTE)![1]);
-        i++;
-      }
-      blocks.push({ kind: 'quote', lines: body });
+      const { block, next } = parseQuote(lines, i);
+      blocks.push(block);
+      i = next;
       continue;
     }
 
-    const next = lines[i + 1];
-    if (line.includes('|') && next != null && next.includes('-') && TABLE_SEP.test(next)) {
-      const header = splitCells(line);
-      i += 2;
-      const rows: string[][] = [];
-      while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
-        rows.push(splitCells(lines[i]));
-        i++;
-      }
-      blocks.push({ kind: 'table', header, rows });
+    if (isTableStart(lines, i)) {
+      const { block, next } = parseTable(lines, i);
+      blocks.push(block);
+      i = next;
       continue;
     }
 
     // paragraph — runs until a blank line or anything that starts a block
-    const body: string[] = [];
-    while (i < lines.length) {
-      const l = lines[i];
-      if (
-        l.trim() === '' ||
-        FENCE.test(l) ||
-        HEADING.test(l) ||
-        BULLET.test(l) ||
-        ORDERED.test(l) ||
-        QUOTE.test(l)
-      ) {
-        break;
-      }
-      body.push(l);
-      i++;
-    }
-    blocks.push({ kind: 'paragraph', lines: body });
+    const { block, next } = parseParagraph(lines, i);
+    blocks.push(block);
+    i = next;
   }
 
   return blocks;
@@ -205,16 +257,14 @@ const DASH_COMMENT = new Set(['sql', 'lua', 'hs', 'haskell']);
 
 function highlight(code: string, lang: string, c: Cli, base: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const comment = DASH_COMMENT.has(lang)
-    ? '--[^\n]*'
-    : HASH_COMMENT.has(lang)
-      ? '#[^\n]*|//[^\n]*'
-      : '\\/\\/[^\n]*';
+  let comment = String.raw`\/\/[^\n]*`;
+  if (DASH_COMMENT.has(lang)) comment = '--[^\n]*';
+  else if (HASH_COMMENT.has(lang)) comment = '#[^\n]*|//[^\n]*';
   const re = new RegExp(
-    `(\\/\\*[\\s\\S]*?\\*\\/|${comment})` + // 1 comment
-      `|("(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])*'|` + '`(?:\\\\.|[^`\\\\])*`)' + // 2 string
-      `|(\\b0x[0-9a-fA-F]+\\b|\\b\\d+(?:\\.\\d+)?\\b)` + // 3 number
-      `|(\\b[A-Za-z_][A-Za-z0-9_]*\\b)(?=(\\())?`, // 4 word, 5 call
+    String.raw`(\/\*[\s\S]*?\*\/|${comment})` + // 1 comment
+      String.raw`|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\.|[^\x60\\])*\x60)` + // 2 string
+      String.raw`|(\b0x[0-9a-fA-F]+\b|\b\d+(?:\.\d+)?\b)` + // 3 number
+      String.raw`|(\b[A-Za-z_]\w*\b)(?=(\())?`, // 4 word, 5 call
     'g',
   );
   let last = 0;
@@ -228,21 +278,23 @@ function highlight(code: string, lang: string, c: Cli, base: string): ReactNode[
   for (let m = re.exec(code); m; m = re.exec(code)) {
     if (m.index > last) push(code.slice(last, m.index), base);
     const t = m[0];
-    if (m[1] != null) push(t, c.com);
-    else if (m[2] != null) push(t, c.str);
-    else if (m[3] != null) push(t, c.num);
-    else {
-      const w = m[4];
-      if (KEYWORDS.has(w)) push(t, c.kw);
-      else if (m[5]) push(t, c.fn);
-      else if (/^[A-Z][A-Za-z0-9_]*$/.test(w)) push(t, c.type);
-      else push(t, base);
-    }
+    push(t, tokenColor(m, c, base));
     last = m.index + t.length;
     if (t.length === 0) re.lastIndex++;
   }
   if (last < code.length) push(code.slice(last), base);
   return out;
+}
+
+function tokenColor(m: RegExpExecArray, c: Cli, base: string): string {
+  if (m[1] != null) return c.com;
+  if (m[2] != null) return c.str;
+  if (m[3] != null) return c.num;
+  const w = m[4];
+  if (KEYWORDS.has(w)) return c.kw;
+  if (m[5]) return c.fn;
+  if (/^[A-Z]\w*$/.test(w)) return c.type;
+  return base;
 }
 
 function looksLikeDiff(code: string, lang: string): boolean {
@@ -269,7 +321,7 @@ function renderDiff(code: string, c: Cli, base: string): ReactNode[] {
       bg = withAlpha(c.del, 0.12);
     }
     return (
-      <Text key={i} style={{ color, backgroundColor: bg }}>
+      <Text key={i /* NOSONAR — a diff is rebuilt from scratch on every render; index keys are correct here */} style={{ color, backgroundColor: bg }}>
         {line}
         {i < all.length - 1 ? '\n' : ''}
       </Text>
@@ -280,14 +332,80 @@ function renderDiff(code: string, c: Cli, base: string): ReactNode[] {
 function withAlpha(hex: string, a: number): string {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
   if (!m) return hex;
-  const n = parseInt(m[1], 16);
+  const n = Number.parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
 // ---------- inline model ----------
 
 const INLINE =
-  /(`[^`\n]+`)|(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(~~[^~]+~~)/g;
+  /(?:`[^`\n]+`)|(?:\[[^\]]+\]\([^)\s]+\))|(?:\*\*[^*]+\*\*)|(?:\*[^*\n]+\*)|(?:_[^_\n]+_)|(?:~~[^~]+~~)/g;
+
+const LINK_TOKEN = /^\[([^\]]+)\]\(([^)\s]+)\)$/;
+
+type InlineKind = 'code' | 'link' | 'bold' | 'strike' | 'italic';
+
+function inlineKind(token: string): InlineKind {
+  if (token.startsWith('`')) return 'code';
+  if (token.startsWith('[')) return 'link';
+  if (token.startsWith('**')) return 'bold';
+  if (token.startsWith('~~')) return 'strike';
+  return 'italic';
+}
+
+function renderToken(
+  token: string,
+  kind: InlineKind,
+  theme: Palette,
+  keyPrefix: string,
+  bold: boolean,
+): ReactNode {
+  const c = cliColors(theme);
+  switch (kind) {
+    case 'code':
+      return (
+        <Text style={{ fontFamily: Fonts.mono, fontSize: 15, color: c.code }}>
+          {token.slice(1, -1)}
+        </Text>
+      );
+    case 'link': {
+      const link = LINK_TOKEN.exec(token);
+      if (!link) return token;
+      const url = link[2];
+      return (
+        <Text
+          style={{ color: c.link, textDecorationLine: 'underline' }}
+          onPress={() => {
+            Linking.openURL(url).catch(() => {});
+          }}>
+          {renderInline(link[1], theme, `${keyPrefix}-l`, bold)}
+        </Text>
+      );
+    }
+    case 'bold':
+      return (
+        <Text style={{ fontFamily: Fonts.semibold, color: c.bold }}>
+          {renderInline(token.slice(2, -2), theme, `${keyPrefix}-b`, true)}
+        </Text>
+      );
+    case 'strike':
+      return (
+        <Text style={{ textDecorationLine: 'line-through', color: c.strike }}>
+          {renderInline(token.slice(2, -2), theme, `${keyPrefix}-s`, bold)}
+        </Text>
+      );
+    case 'italic':
+      return (
+        <Text
+          style={{
+            fontFamily: bold ? Fonts.semiboldItalic : Fonts.italic,
+            color: c.italic,
+          }}>
+          {renderInline(token.slice(1, -1), theme, `${keyPrefix}-i`, bold)}
+        </Text>
+      );
+  }
+}
 
 function renderInline(
   text: string,
@@ -309,54 +427,8 @@ function renderInline(
   while ((m = re.exec(text)) != null) {
     if (m.index > last) push(text.slice(last, m.index));
     const token = m[0];
-
-    if (token.startsWith('`')) {
-      push(
-        <Text style={{ fontFamily: Fonts.mono, fontSize: 15, color: cliColors(theme).code }}>
-          {token.slice(1, -1)}
-        </Text>,
-      );
-    } else if (token.startsWith('[')) {
-      const link = token.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
-      if (link) {
-        const url = link[2];
-        push(
-          <Text
-            style={{ color: cliColors(theme).link, textDecorationLine: 'underline' }}
-            onPress={() => {
-              Linking.openURL(url).catch(() => {});
-            }}>
-            {renderInline(link[1], theme, `${keyPrefix}-l${key}`, bold)}
-          </Text>,
-        );
-      } else {
-        push(token);
-      }
-    } else if (token.startsWith('**')) {
-      push(
-        <Text style={{ fontFamily: Fonts.semibold, color: cliColors(theme).bold }}>
-          {renderInline(token.slice(2, -2), theme, `${keyPrefix}-b${key}`, true)}
-        </Text>,
-      );
-    } else if (token.startsWith('~~')) {
-      push(
-        <Text style={{ textDecorationLine: 'line-through', color: cliColors(theme).strike }}>
-          {renderInline(token.slice(2, -2), theme, `${keyPrefix}-s${key}`, bold)}
-        </Text>,
-      );
-    } else {
-      // *italic* or _italic_
-      push(
-        <Text
-          style={{
-            fontFamily: bold ? Fonts.semiboldItalic : Fonts.italic,
-            color: cliColors(theme).italic,
-          }}>
-          {renderInline(token.slice(1, -1), theme, `${keyPrefix}-i${key}`, bold)}
-        </Text>,
-      );
-    }
-
+    const kind = inlineKind(token);
+    push(renderToken(token, kind, theme, `${keyPrefix}-${kind[0]}${key}`, bold));
     last = m.index + token.length;
   }
 
@@ -384,11 +456,11 @@ export function CodeBlock({
   code,
   lang = '',
   style,
-}: {
+}: Readonly<{
   code: string;
   lang?: string;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   const theme = useTheme();
   const c = cliColors(theme);
   const body = useMemo(
@@ -533,18 +605,18 @@ export function RichText({
   text,
   style,
   themeColor = 'ink',
-}: {
+}: Readonly<{
   text: string;
   style?: StyleProp<TextStyle>;
   themeColor?: ThemeColor;
-}) {
+}>) {
   const theme = useTheme();
   const blocks = useMemo(() => parseBlocks(text ?? ''), [text]);
 
   return (
     <View>
       {blocks.map((block, i) => (
-        <View key={`blk-${i}`} style={i > 0 ? { marginTop: Space.blockSpacing } : undefined}>
+        <View key={`blk-${i}` /* NOSONAR — blocks are rebuilt from scratch on every render; index keys are correct here */} style={i > 0 ? { marginTop: Space.blockSpacing } : undefined}>
           {renderBlock(block, theme, `blk${i}`)}
         </View>
       ))}
