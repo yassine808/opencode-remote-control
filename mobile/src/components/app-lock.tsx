@@ -10,7 +10,7 @@
 
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppState, StyleSheet, View } from 'react-native';
+import { AppState, Platform, StyleSheet, View } from 'react-native';
 
 import { BrandWordmark, WORDMARK_FULL } from '@/components/brand';
 import { ThemedText } from '@/components/themed-text';
@@ -19,7 +19,8 @@ import { useTheme } from '@/hooks/use-theme';
 
 export function AppLock({ children }: { children: ReactNode }) {
   const theme = useTheme();
-  const [locked, setLocked] = useState(true);
+  // Browsers have no device-auth prompt to show; the web preview opens ungated.
+  const [locked, setLocked] = useState(Platform.OS !== 'web');
   const [busy, setBusy] = useState(false);
   /** The device has nothing to authenticate with at all. */
   const [ungated, setUngated] = useState(false);
@@ -63,6 +64,7 @@ export function AppLock({ children }: { children: ReactNode }) {
   }, [locked, unlock]);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
         lockedRef.current = true;
