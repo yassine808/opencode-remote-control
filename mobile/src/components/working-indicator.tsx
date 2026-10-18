@@ -1,35 +1,19 @@
 /**
  * "The agent is working" — and, more importantly, what on.
  *
- * The pulse is a heartbeat, not a spinner: measured off claude.ai's shipping
- * keyframes, a 1.8s cycle that rises fast, holds bright briefly, then decays
- * slowly and rests dim. The asymmetry is the entire effect — a sine wave
- * reads mechanical.
- *
- * The words matter more than the motion: the label names the activity, and
- * escalates as the wait grows rather than sitting still and looking stuck.
+ * A sonar-pulsing dot, the activity name as a travelling wave of light, a
+ * live stopwatch, and a hairline track with a light running along it. The
+ * motion says "alive"; the words say what it is doing, and escalate as the
+ * wait grows rather than sitting still and looking stuck.
  */
 
 import { useEffect, useState } from 'react';
-import { Animated, View } from 'react-native';
+import { View } from 'react-native';
 
+import { FadeRise, PulseDot, Sweep, WaveText, withAlpha } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
-import { useReduceMotion } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
-
-const CYCLE = 1800;
-
-function easeOutQuart(x: number): number {
-  return 1 - Math.pow(1 - x, 4);
-}
-
-/** t in [0,1) → opacity. Rise 0–10%, hold 10–25%, decay 25–65%, rest dim. */
-function pulse(t: number): number {
-  if (t < 0.1) return 0.3 + 0.7 * easeOutQuart(t / 0.1);
-  if (t < 0.25) return 1;
-  if (t < 0.65) return 1 - 0.7 * easeOutQuart((t - 0.25) / 0.4);
-  return 0.3;
-}
+import { fmtElapsed } from '@/lib/format';
 
 export function escalationLabel(activity: string, elapsedMs: number): string {
   const what = activity || 'Working';
@@ -39,54 +23,64 @@ export function escalationLabel(activity: string, elapsedMs: number): string {
   return `${what} — still working, Stop is available`;
 }
 
+function escalationNote(elapsedMs: number): string | null {
+  if (elapsedMs < 10_000) return null;
+  if (elapsedMs < 20_000) return 'Still going';
+  if (elapsedMs < 45_000) return "This one's taking a while";
+  return 'Still working — Stop is available';
+}
+
 export function WorkingIndicator({ activity, since }: { activity: string; since: number }) {
   const theme = useTheme();
-  const reduce = useReduceMotion();
-  const [opacity] = useState(() => new Animated.Value(0.3));
   // A ticking clock; the label is derived from it, so a change in activity
   // lands on the very next render instead of waiting for a timer.
   const [now, setNow] = useState(() => Date.now());
 
-  // The heartbeat. requestAnimationFrame keeps it smooth on web; on native
-  // it's a 7pt dot, so JS-thread ticks are plenty.
-  useEffect(() => {
-    if (reduce) {
-      opacity.setValue(0.85);
-      return;
-    }
-    let raf = 0;
-    const start = Date.now();
-    const tick = () => {
-      const t = ((Date.now() - start) % CYCLE) / CYCLE;
-      opacity.setValue(pulse(t));
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [reduce, opacity]);
-
-  // Escalating copy — the clock ticks every second so the sentence keeps up.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const label = escalationLabel(activity, now - since);
+  const elapsed = now - since;
+  const note = escalationNote(elapsed);
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <Animated.View
+    <View
+      style={{ gap: 6 }}
+      accessible
+      accessibilityLabel={escalationLabel(activity || 'Working', elapsed)}
+      accessibilityLiveRegion="polite">
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ width: 14, alignItems: 'center' }}>
+          <PulseDot color={theme.clay} size={8} rings={2} />
+        </View>
+        <WaveText text={activity || 'Working'} type="callout" style={{ color: theme.inkMuted }} />
+        <ThemedText
+          type="caption"
+          style={{ color: theme.inkFaint, fontVariant: ['tabular-nums'] }}>
+          {fmtElapsed(elapsed)}
+        </ThemedText>
+      </View>
+
+      <View
         style={{
-          width: 7,
-          height: 7,
-          borderRadius: 3.5,
-          backgroundColor: theme.clay,
-          opacity,
-        }}
-      />
-      <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
-        {label}
-      </ThemedText>
+          marginLeft: 24,
+          width: 132,
+          height: 2,
+          borderRadius: 1,
+          overflow: 'hidden',
+          backgroundColor: theme.inkWell,
+        }}>
+        <Sweep color={withAlpha(theme.clay, 0.9)} duration={1700} bandWidth={0.45} />
+      </View>
+
+      {note ? (
+        <FadeRise key={note} distance={4} duration={260} style={{ marginLeft: 24 }}>
+          <ThemedText type="caption" style={{ color: theme.inkMuted }}>
+            {note}
+          </ThemedText>
+        </FadeRise>
+      ) : null}
     </View>
   );
 }

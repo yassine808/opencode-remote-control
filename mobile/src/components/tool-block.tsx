@@ -9,9 +9,10 @@
  */
 
 import { useState } from 'react';
-import { ActivityIndicator, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 
 import { MessageImage } from '@/components/message-image';
+import { PopIn, SpinnerRing, Sweep, withAlpha } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale } from '@/components/ui';
 import { Fonts } from '@/constants/theme';
@@ -92,6 +93,11 @@ export function ToolBlock({ part }: { part: ToolPart }) {
   const running = status === 'running' || status === 'pending';
   const errored = status === 'error' || !!part.state.error;
 
+  // A call watched while it ran gets a little "pop" when it lands; history
+  // that was already finished on arrival stays still.
+  const [sawRunning, setSawRunning] = useState(running);
+  if (running && !sawRunning) setSawRunning(true);
+
   const preview = previewFor(part);
   const errorMessage = errored ? part.state.error?.message : undefined;
   const images = (part.state.content ?? []).filter(
@@ -105,11 +111,33 @@ export function ToolBlock({ part }: { part: ToolPart }) {
 
   return (
     <View style={{ gap: 6 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          overflow: 'hidden',
+          borderRadius: 6,
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+        }}>
+        {running ? <Sweep color={withAlpha(theme.clay, 0.18)} duration={1900} /> : null}
         {running ? (
-          <ActivityIndicator size="small" color={theme.inkMuted} style={{ width: 13 }} />
+          <View style={{ width: 13, height: 13, alignItems: 'center', justifyContent: 'center' }}>
+            <SpinnerRing size={13} stroke={1.75} color={theme.clay} duration={900} />
+          </View>
         ) : errored ? (
-          <Glyph name="close-circle-outline" size={13} color={theme.negative} />
+          sawRunning ? (
+            <PopIn from={0.3}>
+              <Glyph name="close-circle-outline" size={13} color={theme.negative} />
+            </PopIn>
+          ) : (
+            <Glyph name="close-circle-outline" size={13} color={theme.negative} />
+          )
+        ) : sawRunning ? (
+          <PopIn from={0.3}>
+            <Glyph name="checkmark-circle-outline" size={13} color={theme.positive} />
+          </PopIn>
         ) : (
           <Glyph name="checkmark-circle-outline" size={13} color={theme.inkMuted} />
         )}

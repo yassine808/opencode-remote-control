@@ -1,7 +1,10 @@
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -14,8 +17,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Composer } from '@/components/composer';
+import { Composer, type Attachment } from '@/components/composer';
+import { ContextButton, ContextSheet, type ContextStats } from '@/components/context-sheet';
 import { MessageImage } from '@/components/message-image';
+import { FadeRise, ND } from '@/components/motion';
 import { ModelSheet } from '@/components/model-sheet';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
@@ -51,6 +56,7 @@ import type {
   TextDeltaData,
   TextEndedData,
   TextPart,
+  TokenUsage,
   ToolPart,
   UsageEventData,
   UserMessage,
@@ -105,7 +111,8 @@ type RowBase =
   | { kind: 'error'; id: string; text: string }
   | { kind: 'caption'; id: string; text: string };
 
-type Row = RowBase & { padTop: number };
+/** `mid` is the id of the message a row came from — what "was already there" is judged by. */
+type Row = RowBase & { padTop: number; mid: string };
 
 /**
  * Flatten messages into transcript rows.
@@ -116,6 +123,7 @@ type Row = RowBase & { padTop: number };
  */
 function buildRows(messages: MessageInfo[], running: boolean): Row[] {
   const rows: Row[] = [];
+  let mid = '';
 
   const push = (row: RowBase) => {
     const prev = rows[rows.length - 1];
@@ -134,10 +142,11 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
             : Space.betweenTurns
           : Space.betweenParts;
     }
-    rows.push({ ...row, padTop });
+    rows.push({ ...row, padTop, mid });
   };
 
   for (const message of messages) {
+    mid = message.id;
     if (message.type === 'user') {
       const user = message as UserMessage;
       const files = Array.isArray(user.files) ? user.files : [];
@@ -297,6 +306,110 @@ function activityFor(rows: Row[]): string {
   }
 }
 
+// ---------- context window ----------
+
+/**
+ * The window's current fill is the newest assistant message that reported
+ * tokens: input + output + reasoning + cache reads/writes — the same sum the
+ * server bills the next turn against.
+ */
+function latestTokens(messages: MessageInfo[]): ContextStats['tokens'] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.type !== 'assistant') continue;
+    const t: TokenUsage | undefined = (message as AssistantMessage).tokens;
+    if (!t) continue;
+    const input = t.input ?? 0;
+    const output = t.output ?? 0;
+    const reasoning = t.reasoning ?? 0;
+    const cacheRead = t.cache?.read ?? 0;
+    const cacheWrite = t.cache?.write ?? 0;
+    const total = input + output + reasoning + cacheRead + cacheWrite;
+    if (total > 0) return { input, output, reasoning, cacheRead, cacheWrite, total };
+  }
+  return null;
+}
+
+const PAGE_SIZE = 60;
+
+// ---------- small animated pieces ----------
+
+/** A row slides in once — never again when it is scrolled back into view. */
+function RowEnter({
+  id,
+  animate,
+  played,
+  children,
+}: {
+  id: string;
+  animate: boolean;
+  played: Set<string>;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    played.add(id);
+  }, [id, played]);
+  return (
+    <FadeRise enabled={animate} distance={animate ? 14 : 0} duration={380}>
+      {children}
+    </FadeRise>
+  );
+}
+
+/** Appears when the reader has scrolled away from the newest turn. */
+function JumpButton({ visible, onPress }: { visible: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  const [p] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    const anim = Animated.spring(p, {
+      toValue: visible ? 1 : 0,
+      friction: 7,
+      tension: 140,
+      useNativeDriver: ND,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [visible, p]);
+
+  return (
+    <Animated.View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={{
+        position: 'absolute',
+        right: 16,
+        bottom: 12,
+        opacity: p.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' }),
+        transform: [
+          { translateY: p.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) },
+          { scale: p.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) },
+        ],
+      }}>
+      <PressableScale
+        onPress={onPress}
+        scaleTo={0.9}
+        accessibilityLabel="Jump to latest"
+        style={{
+          width: 38,
+          height: 38,
+          borderRadius: 19,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.surfaceRaised,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.hairline,
+          elevation: 4,
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+        }}>
+        <Glyph name="arrow-down" size={18} color={theme.ink} />
+      </PressableScale>
+    </Animated.View>
+  );
+}
+
 // ---------- screen ----------
 
 export default function SessionScreen() {
@@ -321,17 +434,30 @@ export default function SessionScreen() {
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [showJump, setShowJump] = useState(false);
   const insets = useSafeAreaInsets();
 
   const listRef = useRef<FlatList<Row>>(null);
   const autoScrollRef = useRef(true);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordedRef = useRef<string | null>(null);
+  /** Messages present at first load — only newer ones animate in. */
+  const baselineRef = useRef<Set<string> | null>(null);
+  const playedRef = useRef<Set<string>>(new Set());
+  const modelsAskedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    baselineRef.current = null;
+    playedRef.current = new Set();
+    modelsAskedRef.current = null;
+  }, [sessionID]);
 
   const loadMessages = useCallback(async () => {
     if (!api || !sessionID) return;
     try {
-      const res = await api.messages(sessionID, { limit: 60, order: 'desc' });
+      const res = await api.messages(sessionID, { limit: PAGE_SIZE, order: 'desc' });
+      if (!baselineRef.current) baselineRef.current = new Set(res.data.map((m) => m.id));
       setMessages([...res.data].reverse());
       setLoaded(true);
     } catch {
@@ -610,19 +736,32 @@ export default function SessionScreen() {
     [api, sessionID],
   );
 
-  const loadModels = useCallback(async () => {
+  const loadModels = useCallback(
+    async (silent = false) => {
+      const directory = sessionInfo?.location?.directory;
+      if (!api || !sessionID || !directory || models || modelsLoading) return;
+      setModelsLoading(true);
+      try {
+        const res = await api.models(directory);
+        setModels(res.data);
+      } catch (err) {
+        // The background fetch (for the context limit) fails quietly; the
+        // picker, which needs the list, says so.
+        if (!silent) setExecError(describeError(err));
+      } finally {
+        setModelsLoading(false);
+      }
+    },
+    [api, sessionID, sessionInfo?.location?.directory, models, modelsLoading],
+  );
+
+  // The context ring needs the model's window size, so fetch the list early.
+  useEffect(() => {
     const directory = sessionInfo?.location?.directory;
-    if (!api || !sessionID || !directory || models || modelsLoading) return;
-    setModelsLoading(true);
-    try {
-      const res = await api.models(directory);
-      setModels(res.data);
-    } catch (err) {
-      setExecError(describeError(err));
-    } finally {
-      setModelsLoading(false);
-    }
-  }, [api, sessionID, sessionInfo?.location?.directory, models, modelsLoading]);
+    if (!directory || modelsAskedRef.current === directory) return;
+    modelsAskedRef.current = directory;
+    void loadModels(true);
+  }, [sessionInfo?.location?.directory, loadModels]);
 
   const openModelSheet = useCallback(() => {
     setModelSheetOpen(true);
@@ -680,6 +819,36 @@ export default function SessionScreen() {
     return variant ? `${name} · ${variant}` : name;
   }, [currentModel, models]);
 
+  const contextStats = useMemo<ContextStats>(() => {
+    const info = currentModel
+      ? models?.find((m) => m.id === currentModel.id && m.providerID === currentModel.providerID)
+      : undefined;
+    const limit = info?.limit?.context && info.limit.context > 0 ? info.limit.context : null;
+    const tokens = latestTokens(messages);
+    return {
+      title: sessionInfo?.title?.trim() || 'Session',
+      provider: currentModel?.providerID ?? null,
+      modelName: info?.name ?? (currentModel ? (currentModel.id.split('/').pop() ?? currentModel.id) : null),
+      contextLimit: limit,
+      tokens,
+      usage: tokens && limit ? Math.min(1, tokens.total / limit) : null,
+      messages: messages.length,
+      messagesCapped: messages.length >= PAGE_SIZE,
+      userMessages: messages.filter((m) => m.type === 'user').length,
+      assistantMessages: messages.filter((m) => m.type === 'assistant').length,
+      cost: sessionInfo?.cost,
+      created: sessionInfo?.time?.created,
+      lastActivity: sessionInfo?.time?.updated,
+      running,
+    };
+  }, [messages, models, currentModel, sessionInfo, running]);
+
+  const jumpToLatest = useCallback(() => {
+    autoScrollRef.current = true;
+    listRef.current?.scrollToEnd({ animated: true });
+    setShowJump(false);
+  }, []);
+
   const todoSummary = useMemo(() => {
     const total = todos.length;
     const done = todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length;
@@ -728,31 +897,37 @@ export default function SessionScreen() {
             </ThemedText>
           </View>
           {todos.length > 0 ? (
-            <PressableScale
-              onPress={() => setTodosOpen((v) => !v)}
-              scaleTo={0.94}
-              hitSlop={10}
-              accessibilityLabel={`To-do list, ${todoSummary.done} of ${todoSummary.total} done`}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                height: 26,
-                paddingHorizontal: 9,
-                borderRadius: 13,
-                backgroundColor: todoSummary.soft,
-              }}>
-              <Glyph set="mci" name="format-list-checks" size={13} color={todoSummary.color} />
-              <ThemedText
-                type="caption"
-                weight="semibold"
-                style={{ color: todoSummary.color, fontVariant: ['tabular-nums'] }}>
-                {todoSummary.done}/{todoSummary.total}
-              </ThemedText>
-            </PressableScale>
-          ) : (
-            <View style={{ width: 40 }} />
-          )}
+            <FadeRise distance={0} duration={300}>
+              <PressableScale
+                onPress={() => setTodosOpen((v) => !v)}
+                scaleTo={0.94}
+                hitSlop={10}
+                accessibilityLabel={`To-do list, ${todoSummary.done} of ${todoSummary.total} done`}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  height: 26,
+                  paddingHorizontal: 9,
+                  borderRadius: 13,
+                  backgroundColor: todoSummary.soft,
+                }}>
+                <Glyph set="mci" name="format-list-checks" size={13} color={todoSummary.color} />
+                <ThemedText
+                  type="caption"
+                  weight="semibold"
+                  style={{ color: todoSummary.color, fontVariant: ['tabular-nums'] }}>
+                  {todoSummary.done}/{todoSummary.total}
+                </ThemedText>
+              </PressableScale>
+            </FadeRise>
+          ) : null}
+          {/* context ring — how full the window is; tap for the full ledger */}
+          <ContextButton
+            usage={contextStats.usage}
+            running={running}
+            onPress={() => setContextOpen(true)}
+          />
         </View>
       </View>
 
@@ -788,6 +963,8 @@ export default function SessionScreen() {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
                 autoScrollRef.current = distance < 140;
+                const away = distance > 320;
+                setShowJump((prev) => (prev === away ? prev : away));
               }}
               scrollEventThrottle={100}
               showsVerticalScrollIndicator={false}
@@ -802,6 +979,14 @@ export default function SessionScreen() {
               }
               renderItem={({ item: row }) => (
                 <View style={{ paddingTop: row.padTop }}>
+                  <RowEnter
+                    id={row.id}
+                    played={playedRef.current}
+                    animate={
+                      baselineRef.current != null &&
+                      !baselineRef.current.has(row.mid) &&
+                      !playedRef.current.has(row.id)
+                    }>
                   {row.kind === 'image' ? (
                     <MessageImage uri={row.uri} label={row.label} align="right" />
                   ) : row.kind === 'user' ? (
@@ -839,6 +1024,7 @@ export default function SessionScreen() {
                       {row.text}
                     </ThemedText>
                   )}
+                  </RowEnter>
                 </View>
               )}
               ListFooterComponent={
@@ -874,6 +1060,7 @@ export default function SessionScreen() {
               }
             />
           )}
+          <JumpButton visible={showJump && loaded} onPress={jumpToLatest} />
         </View>
 
         <View
@@ -906,7 +1093,9 @@ export default function SessionScreen() {
             onPress={() => setTodosOpen(false)}
             accessibilityLabel="Close to-do list"
           />
-          <View
+          <FadeRise
+            distance={-10}
+            duration={260}
             style={{
               position: 'absolute',
               top: insets.top + 50,
@@ -914,23 +1103,34 @@ export default function SessionScreen() {
               width: 300,
               maxWidth: '92%',
               maxHeight: 420,
-              borderRadius: Radius.block,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.hairline,
-              backgroundColor: theme.surface,
-              overflow: 'hidden',
-              elevation: 8,
-              shadowColor: '#000',
-              shadowOpacity: 0.25,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 8 },
             }}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <PlanCard todos={todos} />
-            </ScrollView>
-          </View>
+            <View
+              style={{
+                maxHeight: 420,
+                borderRadius: Radius.block,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.hairline,
+                backgroundColor: theme.surface,
+                overflow: 'hidden',
+                elevation: 8,
+                shadowColor: '#000',
+                shadowOpacity: 0.25,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 8 },
+              }}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <PlanCard todos={todos} />
+              </ScrollView>
+            </View>
+          </FadeRise>
         </View>
       ) : null}
+
+      <ContextSheet
+        visible={contextOpen}
+        stats={contextStats}
+        onClose={() => setContextOpen(false)}
+      />
 
       <ModelSheet
         visible={modelSheetOpen}
