@@ -10,7 +10,7 @@ import { Glyph, PressableScale } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 import { fmtElapsed } from '@/lib/format';
 
-export function TurnFooter({ text, ms }: { text: string; ms: number | null }) {
+export function TurnFooter({ text, ms }: Readonly<{ text: string; ms: number | null }>) {
   const theme = useTheme();
   const [copied, setCopied] = useState(false);
 

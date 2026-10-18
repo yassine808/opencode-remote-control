@@ -34,14 +34,14 @@ function SheetFrame({
   onClose,
   fixedHeight,
   children,
-}: {
+}: Readonly<{
   visible: boolean;
   title: string;
   busy?: boolean;
   onClose: () => void;
   fixedHeight?: boolean;
   children: React.ReactNode;
-}) {
+}>) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   return (
@@ -115,7 +115,7 @@ export function ModelSheet({
   busy,
   onClose,
   onPick,
-}: {
+}: Readonly<{
   visible: boolean;
   /** null until the first fetch lands */
   models: ModelInfo[] | null;
@@ -125,7 +125,7 @@ export function ModelSheet({
   busy?: boolean;
   onClose: () => void;
   onPick: (model: ModelInfo, variant?: string) => void;
-}) {
+}>) {
   const theme = useTheme();
   const [query, setQuery] = useState('');
 
@@ -145,6 +145,75 @@ export function ModelSheet({
     return [...out].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [models, query, current]);
+
+  let body: React.ReactNode;
+  if (loading && !models) {
+    body = (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={theme.inkMuted} />
+      </View>
+    );
+  } else if (filtered.length === 0) {
+    body = (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ThemedText type="callout" style={{ color: theme.inkFaint }}>
+          No models match.
+        </ThemedText>
+      </View>
+    );
+  } else {
+    body = (
+      <FlatList
+        data={filtered}
+        keyExtractor={(m) => `${m.providerID}/${m.id}`}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8 }}
+        initialNumToRender={16}
+        renderItem={({ item: m }) => {
+          const selected = isCurrent(m);
+          return (
+            <PressableScale
+              scaleTo={0.98}
+              disabled={busy}
+              onPress={() => {
+                // switching models drops the effort unless the same model is re-picked
+                onPick(m, selected ? (current?.variant ?? undefined) : undefined);
+                onClose();
+              }}
+              accessibilityLabel={`Use ${m.name}`}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 11,
+                borderRadius: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                backgroundColor: selected ? theme.accentSoft : 'transparent',
+              }}>
+              <View style={{ flex: 1, gap: 1 }}>
+                <ThemedText
+                  type="subheadline"
+                  weight={selected ? 'semibold' : 'regular'}
+                  numberOfLines={1}
+                  style={{ color: theme.ink }}>
+                  {m.name}
+                </ThemedText>
+                <ThemedText type="caption" numberOfLines={1} style={{ color: theme.inkFaint }}>
+                  {m.providerID}
+                </ThemedText>
+              </View>
+              {m.variants?.length ? (
+                <Glyph set="mci" name="speedometer" size={14} color={theme.inkFaint} />
+              ) : null}
+              {selected ? <Glyph name="checkmark" size={17} color={theme.accent} /> : null}
+            </PressableScale>
+          );
+        }}
+      />
+    );
+  }
 
   return (
     <SheetFrame visible={visible} title="Model" busy={busy} onClose={onClose} fixedHeight>
@@ -179,67 +248,7 @@ export function ModelSheet({
         ) : null}
       </View>
 
-      {loading && !models ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color={theme.inkMuted} />
-        </View>
-      ) : filtered.length === 0 ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ThemedText type="callout" style={{ color: theme.inkFaint }}>
-            No models match.
-          </ThemedText>
-        </View>
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(m) => `${m.providerID}/${m.id}`}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8 }}
-          initialNumToRender={16}
-          renderItem={({ item: m }) => {
-            const selected = isCurrent(m);
-            return (
-              <PressableScale
-                scaleTo={0.98}
-                disabled={busy}
-                onPress={() => {
-                  // switching models drops the effort unless the same model is re-picked
-                  onPick(m, selected ? (current?.variant ?? undefined) : undefined);
-                  onClose();
-                }}
-                accessibilityLabel={`Use ${m.name}`}
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 11,
-                  borderRadius: 12,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  backgroundColor: selected ? theme.accentSoft : 'transparent',
-                }}>
-                <View style={{ flex: 1, gap: 1 }}>
-                  <ThemedText
-                    type="subheadline"
-                    weight={selected ? 'semibold' : 'regular'}
-                    numberOfLines={1}
-                    style={{ color: theme.ink }}>
-                    {m.name}
-                  </ThemedText>
-                  <ThemedText type="caption" numberOfLines={1} style={{ color: theme.inkFaint }}>
-                    {m.providerID}
-                  </ThemedText>
-                </View>
-                {m.variants?.length ? (
-                  <Glyph set="mci" name="speedometer" size={14} color={theme.inkFaint} />
-                ) : null}
-                {selected ? <Glyph name="checkmark" size={17} color={theme.accent} /> : null}
-              </PressableScale>
-            );
-          }}
-        />
-      )}
+      {body}
     </SheetFrame>
   );
 }
@@ -251,7 +260,7 @@ export function EffortSheet({
   busy,
   onClose,
   onPick,
-}: {
+}: Readonly<{
   visible: boolean;
   /** the session's current model, with its variants */
   model: ModelInfo | null;
@@ -259,7 +268,7 @@ export function EffortSheet({
   busy?: boolean;
   onClose: () => void;
   onPick: (model: ModelInfo, variant?: string) => void;
-}) {
+}>) {
   const theme = useTheme();
   const variants = model?.variants ?? [];
   const active = current?.variant && current.variant !== 'default' ? current.variant : null;

@@ -62,7 +62,7 @@ export function PressableScale({
   accessibilityHint,
   hitSlop,
   testID,
-}: {
+}: Readonly<{
   onPress?: () => void;
   onLongPress?: () => void;
   disabled?: boolean;
@@ -71,11 +71,11 @@ export function PressableScale({
   scaleTo?: number;
   accessibilityLabel?: string;
   accessibilityRole?: 'button' | 'link' | 'imagebutton';
-  accessibilityState?: { disabled?: boolean; selected?: boolean; busy?: boolean };
+  accessibilityState?: { disabled?: boolean; selected?: boolean; busy?: boolean; expanded?: boolean };
   accessibilityHint?: string;
   hitSlop?: number;
   testID?: string;
-}) {
+}>) {
   const [scale] = useState(() => new Animated.Value(1));
 
   const to = (value: number) =>
@@ -125,7 +125,7 @@ export function Button({
   style,
   accessibilityLabel,
   busy,
-}: {
+}: Readonly<{
   children: string;
   onPress?: () => void;
   /** primary = clay fill · accent = violet fill · secondary = hairline stroke */
@@ -134,11 +134,11 @@ export function Button({
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
   busy?: boolean;
-}) {
+}>) {
   const theme = useTheme();
 
-  const bg =
-    variant === 'primary' ? theme.clay : variant === 'accent' ? theme.accent : 'transparent';
+  const fills = { primary: theme.clay, accent: theme.accent, secondary: 'transparent' };
+  const bg = fills[variant];
   const fg = variant === 'secondary' ? theme.ink : theme.onAccent;
 
   return (
@@ -181,11 +181,11 @@ export function StatusDot({
   color,
   size = 10,
   style,
-}: {
+}: Readonly<{
   color: string;
   size?: number;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   return (
     <View
       style={[
@@ -209,13 +209,13 @@ export function Glyph({
   size = 17,
   color,
   style,
-}: {
+}: Readonly<{
   set?: 'ionicons' | 'mci';
   name: string;
   size?: number;
   color?: string;
   style?: StyleProp<TextStyle>;
-}) {
+}>) {
   const theme = useTheme();
   const Cmp: any = set === 'mci' ? MaterialCommunityIcons : Ionicons;
   return <Cmp name={name} size={size} color={color ?? theme.ink} style={style} />;

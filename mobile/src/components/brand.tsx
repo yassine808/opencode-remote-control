@@ -78,13 +78,13 @@ export function BrandWordmark({
   color,
   text = WORDMARK_FULL,
   style,
-}: {
+}: Readonly<{
   /** Height of the lettering. Five rows of cells, so a cell is a fifth. */
   height?: number;
   color?: string;
   text?: string;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   const theme = useTheme();
   const ink = color ?? theme.ink;
 
@@ -99,9 +99,9 @@ export function BrandWordmark({
       accessibilityLabel="Remote for OpenCode"
       style={[{ width: cell * columns, height: cell * ROWS }, style]}
       pointerEvents="none">
-      {cells.map(([col, row], i) => (
+      {cells.map(([col, row]) => (
         <View
-          key={i}
+          key={`${col}-${row}`}
           style={{
             position: 'absolute',
             left: col * cell,

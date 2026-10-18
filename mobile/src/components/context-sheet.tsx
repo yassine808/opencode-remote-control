@@ -81,7 +81,7 @@ function usageNote(usage: number | null, hasLimit: boolean): string {
 
 const dash = '—';
 
-function Cell({ label, value, index, lines = 1 }: { label: string; value: string; index: number; lines?: number }) {
+function Cell({ label, value, index, lines = 1 }: Readonly<{ label: string; value: string; index: number; lines?: number }>) {
   const theme = useTheme();
   return (
     <FadeRise delay={260 + index * 32} distance={8} duration={300} style={{ flex: 1, gap: 2 }}>
@@ -99,15 +99,107 @@ function Cell({ label, value, index, lines = 1 }: { label: string; value: string
   );
 }
 
+/** The hero — the ring, the count, the verdict. */
+function ContextHero({
+  stats,
+  pct,
+  tone,
+}: Readonly<{ stats: ContextStats; pct: number | null; tone: string }>) {
+  const theme = useTheme();
+  const t = stats.tokens;
+  return (
+    <FadeRise delay={80} distance={14} style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+      <View style={{ width: 96, height: 96, alignItems: 'center', justifyContent: 'center' }}>
+        <ProgressRing
+          progress={stats.usage ?? 0}
+          size={92}
+          stroke={8}
+          color={tone}
+          trackColor={theme.inkControl}
+          duration={1100}>
+          <View style={{ position: 'absolute', alignItems: 'center' }}>
+            {pct == null ? (
+              <ThemedText type="title3" style={{ color: theme.inkFaint }}>
+                {dash}
+              </ThemedText>
+            ) : (
+              <AnimatedNumber
+                value={pct}
+                duration={1100}
+                format={(n) => `${Math.round(n)}%`}
+                type="title3"
+                style={{ color: theme.ink }}
+              />
+            )}
+            <ThemedText type="caption2" style={{ color: theme.inkFaint }}>
+              used
+            </ThemedText>
+          </View>
+        </ProgressRing>
+        {stats.running ? (
+          <SpinnerRing size={100} stroke={2} color={theme.clay} duration={1600} />
+        ) : null}
+      </View>
+
+      <View style={{ flex: 1, gap: 3 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+          {t ? (
+            <AnimatedNumber value={t.total} type="title2" duration={1100} style={{ color: theme.ink }} />
+          ) : (
+            <ThemedText type="title2" style={{ color: theme.inkFaint }}>
+              {dash}
+            </ThemedText>
+          )}
+          <ThemedText type="footnote" style={{ color: theme.inkMuted }}>
+            tokens
+          </ThemedText>
+        </View>
+        <ThemedText type="footnote" style={{ color: theme.inkFaint, fontVariant: ['tabular-nums'] }}>
+          {stats.contextLimit ? `of ${fmtInt(stats.contextLimit)} in the window` : 'window size unknown'}
+        </ThemedText>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: tone }} />
+          <ThemedText type="footnote" weight="medium" style={{ color: tone, flexShrink: 1 }}>
+            {usageNote(stats.usage, !!stats.contextLimit)}
+          </ThemedText>
+        </View>
+      </View>
+    </FadeRise>
+  );
+}
+
+/** The ledger rows: label, formatted value, and an optional line clamp. */
+function buildCells(stats: ContextStats, pct: number | null): { label: string; value: string; lines?: number }[] {
+  const t = stats.tokens;
+  return [
+    { label: 'Session', value: stats.title, lines: 2 },
+    { label: 'Messages', value: `${fmtInt(stats.messages)}${stats.messagesCapped ? '+' : ''}` },
+    { label: 'Provider', value: stats.provider ?? dash },
+    { label: 'Model', value: stats.modelName ?? dash, lines: 2 },
+    { label: 'Context limit', value: stats.contextLimit ? fmtInt(stats.contextLimit) : dash },
+    { label: 'Total tokens', value: t ? fmtInt(t.total) : dash },
+    { label: 'Usage', value: pct == null ? dash : `${pct}%` },
+    { label: 'Input tokens', value: t ? fmtInt(t.input) : dash },
+    { label: 'Output tokens', value: t ? fmtInt(t.output) : dash },
+    { label: 'Reasoning tokens', value: t ? fmtInt(t.reasoning) : dash },
+    { label: 'Cache (read / write)', value: t ? `${fmtInt(t.cacheRead)} / ${fmtInt(t.cacheWrite)}` : dash },
+    { label: 'User messages', value: fmtInt(stats.userMessages) },
+    { label: 'Assistant messages', value: fmtInt(stats.assistantMessages) },
+    { label: 'Total cost', value: fmtCost(stats.cost) },
+    { label: 'Session created', value: fmtDateTime(stats.created), lines: 2 },
+    { label: 'Last activity', value: fmtDateTime(stats.lastActivity), lines: 2 },
+  ];
+}
+
 export function ContextSheet({
   visible,
   stats,
   onClose,
-}: {
+}: Readonly<{
   visible: boolean;
   stats: ContextStats;
   onClose: () => void;
-}) {
+}>) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
@@ -199,27 +291,7 @@ export function ContextSheet({
     [shown, drag, screenH],
   );
 
-  const cells: { label: string; value: string; lines?: number }[] = [
-    { label: 'Session', value: stats.title, lines: 2 },
-    {
-      label: 'Messages',
-      value: `${fmtInt(stats.messages)}${stats.messagesCapped ? '+' : ''}`,
-    },
-    { label: 'Provider', value: stats.provider ?? dash },
-    { label: 'Model', value: stats.modelName ?? dash, lines: 2 },
-    { label: 'Context limit', value: stats.contextLimit ? fmtInt(stats.contextLimit) : dash },
-    { label: 'Total tokens', value: t ? fmtInt(t.total) : dash },
-    { label: 'Usage', value: pct == null ? dash : `${pct}%` },
-    { label: 'Input tokens', value: t ? fmtInt(t.input) : dash },
-    { label: 'Output tokens', value: t ? fmtInt(t.output) : dash },
-    { label: 'Reasoning tokens', value: t ? fmtInt(t.reasoning) : dash },
-    { label: 'Cache (read / write)', value: t ? `${fmtInt(t.cacheRead)} / ${fmtInt(t.cacheWrite)}` : dash },
-    { label: 'User messages', value: fmtInt(stats.userMessages) },
-    { label: 'Assistant messages', value: fmtInt(stats.assistantMessages) },
-    { label: 'Total cost', value: fmtCost(stats.cost) },
-    { label: 'Session created', value: fmtDateTime(stats.created), lines: 2 },
-    { label: 'Last activity', value: fmtDateTime(stats.lastActivity), lines: 2 },
-  ];
+  const cells = buildCells(stats, pct);
   const pairs: (typeof cells)[] = [];
   for (let i = 0; i < cells.length; i += 2) pairs.push(cells.slice(i, i + 2));
 
@@ -286,63 +358,7 @@ export function ContextSheet({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8, gap: 22 }}>
             {/* hero — the ring, the count, the verdict */}
-            <FadeRise delay={80} distance={14} style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
-              <View style={{ width: 96, height: 96, alignItems: 'center', justifyContent: 'center' }}>
-                <ProgressRing
-                  progress={stats.usage ?? 0}
-                  size={92}
-                  stroke={8}
-                  color={tone}
-                  trackColor={theme.inkControl}
-                  duration={1100}>
-                  <View style={{ position: 'absolute', alignItems: 'center' }}>
-                    {pct == null ? (
-                      <ThemedText type="title3" style={{ color: theme.inkFaint }}>
-                        {dash}
-                      </ThemedText>
-                    ) : (
-                      <AnimatedNumber
-                        value={pct}
-                        duration={1100}
-                        format={(n) => `${Math.round(n)}%`}
-                        type="title3"
-                        style={{ color: theme.ink }}
-                      />
-                    )}
-                    <ThemedText type="caption2" style={{ color: theme.inkFaint }}>
-                      used
-                    </ThemedText>
-                  </View>
-                </ProgressRing>
-                {stats.running ? (
-                  <SpinnerRing size={100} stroke={2} color={theme.clay} duration={1600} />
-                ) : null}
-              </View>
-
-              <View style={{ flex: 1, gap: 3 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                  {t ? (
-                    <AnimatedNumber value={t.total} type="title2" duration={1100} style={{ color: theme.ink }} />
-                  ) : (
-                    <ThemedText type="title2" style={{ color: theme.inkFaint }}>
-                      {dash}
-                    </ThemedText>
-                  )}
-                  <ThemedText type="footnote" style={{ color: theme.inkMuted }}>
-                    tokens
-                  </ThemedText>
-                </View>
-                <ThemedText type="footnote" style={{ color: theme.inkFaint, fontVariant: ['tabular-nums'] }}>
-                  {stats.contextLimit ? `of ${fmtInt(stats.contextLimit)} in the window` : 'window size unknown'}
-                </ThemedText>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 4 }}>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: tone }} />
-                  <ThemedText type="footnote" weight="medium" style={{ color: tone, flexShrink: 1 }}>
-                    {usageNote(stats.usage, !!stats.contextLimit)}
-                  </ThemedText>
-                </View>
-              </View>
-            </FadeRise>
+            <ContextHero stats={stats} pct={pct} tone={tone} />
 
             {/* token mix — grows in left to right */}
             {mix.length > 0 && t ? (
@@ -393,7 +409,7 @@ export function ContextSheet({
             {/* the full ledger */}
             <View style={{ gap: 16 }}>
               {pairs.map((pair, r) => (
-                <View key={r} style={{ flexDirection: 'row', gap: 20 }}>
+                <View key={pair[0].label} style={{ flexDirection: 'row', gap: 20 }}>
                   {pair.map((c, i) => (
                     <Cell key={c.label} label={c.label} value={c.value} lines={c.lines} index={r * 2 + i} />
                   ))}
@@ -412,11 +428,11 @@ export function ContextButton({
   usage,
   running,
   onPress,
-}: {
+}: Readonly<{
   usage: number | null;
   running: boolean;
   onPress: () => void;
-}) {
+}>) {
   const theme = useTheme();
   // Plain white progress, no motion.
   const color = theme.scheme === 'dark' ? '#FFFFFF' : theme.ink;

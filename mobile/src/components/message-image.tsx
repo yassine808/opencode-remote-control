@@ -23,7 +23,7 @@ interface Props {
   align?: 'left' | 'right';
 }
 
-export function MessageImage({ uri, label, align = 'left' }: Props) {
+export function MessageImage({ uri, label, align = 'left' }: Readonly<Props>) {
   const theme = useTheme();
   const [ratio, setRatio] = useState(1.6);
   const [open, setOpen] = useState(false);

@@ -17,7 +17,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 
-export function AppLock({ children }: { children: ReactNode }) {
+export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
   const theme = useTheme();
   // Browsers have no device-auth prompt to show; the web preview opens ungated.
   const [locked, setLocked] = useState(Platform.OS !== 'web');

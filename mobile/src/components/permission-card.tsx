@@ -24,7 +24,7 @@ import type { PermissionDecision, PermissionRequest } from '@/lib/types';
  * anything touching the wider system, or an edit outside what was asked.
  */
 const DANGER = [
-  /\brm\s+(-[a-z]*[rf][a-z]*\s+)+/i,
+  /\brm\s+(?:-(?=[a-z]*[rf])[a-z]+\s+)+/i,
   /\bsudo\b/i,
   /\b(mkfs|dd|shutdown|reboot|diskpart|format)\b/i,
   /\bchmod\s+-R\b/i,
@@ -69,13 +69,13 @@ export function PermissionCard({
   total,
   busy,
   onDecide,
-}: {
+}: Readonly<{
   request: PermissionRequest | null;
   index: number;
   total: number;
   busy: boolean;
   onDecide: (decision: PermissionDecision) => void;
-}) {
+}>) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [confirmAlways, setConfirmAlways] = useState(false);

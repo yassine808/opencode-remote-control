@@ -19,25 +19,28 @@ export interface TodoItem {
   priority?: string;
 }
 
-function TodoRow({ todo }: { todo: TodoItem }) {
+/** The status mark for one todo. */
+function TodoGlyph({ status, color }: Readonly<{ status: TodoItem['status']; color: string }>) {
+  if (status === 'completed') return <Glyph name="checkmark-circle" size={13} color={color} />;
+  if (status === 'cancelled') return <Glyph name="close-circle-outline" size={13} color={color} />;
+  return <Glyph name="ellipse-outline" size={13} color={color} />;
+}
+
+function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   const theme = useTheme();
   const done = todo.status === 'completed';
   const cancelled = todo.status === 'cancelled';
   const active = todo.status === 'in_progress';
 
-  const tint = done ? theme.positive : active ? theme.clay : theme.inkFaint;
+  let tint = theme.inkFaint;
+  if (done) tint = theme.positive;
+  else if (active) tint = theme.clay;
   const textColor = done || cancelled ? theme.inkFaint : theme.ink;
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
       <View style={{ paddingTop: 1 }}>
-        {done ? (
-          <Glyph name="checkmark-circle" size={13} color={tint} />
-        ) : cancelled ? (
-          <Glyph name="close-circle-outline" size={13} color={tint} />
-        ) : (
-          <Glyph name="ellipse-outline" size={13} color={tint} />
-        )}
+        <TodoGlyph status={todo.status} color={tint} />
       </View>
       <ThemedText
         type="footnote"
@@ -52,7 +55,7 @@ function TodoRow({ todo }: { todo: TodoItem }) {
   );
 }
 
-export function PlanCard({ todos }: { todos: TodoItem[] }) {
+export function PlanCard({ todos }: Readonly<{ todos: TodoItem[] }>) {
   const theme = useTheme();
 
   if (!todos.length) return null;
@@ -80,8 +83,8 @@ export function PlanCard({ todos }: { todos: TodoItem[] }) {
         </ThemedText>
       </View>
 
-      {todos.map((todo, i) => (
-        <TodoRow key={i} todo={todo} />
+      {todos.map((todo) => (
+        <TodoRow key={todo.content} todo={todo} />
       ))}
     </View>
   );

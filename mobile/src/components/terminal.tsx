@@ -29,59 +29,84 @@ interface Seg {
   bold?: boolean;
 }
 
+/** Applies one SGR code to the running style, in place. */
+function applySgr(code: number, style: { color?: string; bold: boolean }): void {
+  if (code === 0) {
+    style.color = undefined;
+    style.bold = false;
+  } else if (code === 1) style.bold = true;
+  else if (code === 22) style.bold = false;
+  else if (code === 39) style.color = undefined;
+  else if (ANSI[code]) style.color = ANSI[code];
+}
+
 /** Minimal ANSI SGR parser: colours + bold; every other escape is dropped. */
 export function parseAnsi(input: string): Seg[] {
   const out: Seg[] = [];
-  let color: string | undefined;
-  let bold = false;
+  const style: { color?: string; bold: boolean } = { bold: false };
   // eslint-disable-next-line no-control-regex
   const re = /\x1b\[([0-9;?]*)([A-Za-z])/g;
   let last = 0;
   for (let m = re.exec(input); m; m = re.exec(input)) {
-    if (m.index > last) out.push({ text: input.slice(last, m.index), color, bold });
+    if (m.index > last)
+      out.push({ text: input.slice(last, m.index), color: style.color, bold: style.bold });
     last = m.index + m[0].length;
     if (m[2] !== 'm') continue;
-    const codes = (m[1] === '' ? '0' : m[1]).split(';').map((n) => parseInt(n, 10) || 0);
-    for (const c of codes) {
-      if (c === 0) {
-        color = undefined;
-        bold = false;
-      } else if (c === 1) bold = true;
-      else if (c === 22) bold = false;
-      else if (c === 39) color = undefined;
-      else if (ANSI[c]) color = ANSI[c];
-    }
+    const codes = (m[1] === '' ? '0' : m[1]).split(';').map((n) => Number.parseInt(n, 10) || 0);
+    for (const code of codes) applySgr(code, style);
   }
-  if (last < input.length) out.push({ text: input.slice(last), color, bold });
+  if (last < input.length)
+    out.push({ text: input.slice(last), color: style.color, bold: style.bold });
   return out;
+}
+
+/** Pairs segments with stable keys (position is the only identity they have). */
+function keyed(segs: Seg[]): { key: number; seg: Seg }[] {
+  let n = 0;
+  return segs.map((seg) => ({ key: n++, seg }));
 }
 
 function outputOf(part: ToolPart): string {
   const fromContent = (part.state.content ?? [])
     .map((b) => (typeof b.text === 'string' ? b.text : ''))
     .join('')
-    .replace(/\r\n/g, '\n');
+    .replaceAll('\r\n', '\n');
   if (fromContent.trim()) return fromContent;
   const meta = part.state.metadata ?? {};
   for (const key of ['output', 'stdout']) {
     const v = meta[key];
-    if (typeof v === 'string' && v.trim()) return v.replace(/\r\n/g, '\n');
+    if (typeof v === 'string' && v.trim()) return v.replaceAll('\r\n', '\n');
   }
   return '';
 }
 
-export function Terminal({ part }: { part: ToolPart }) {
+/** The pieces of a tool call the terminal chrome renders. */
+function shellState(part: ToolPart) {
   const input = part.state.input ?? {};
-  const command = typeof input.command === 'string' ? input.command : '';
-  const description = typeof input.description === 'string' ? input.description : '';
-  const cwd = typeof input.workdir === 'string' ? input.workdir : '';
-  const status = part.state.status;
-  const running = status === 'running' || status === 'pending';
-  const errored = status === 'error' || !!part.state.error;
   const exit = part.state.metadata?.exit;
-  const failed = errored || (typeof exit === 'number' && exit !== 0);
-  const output = outputOf(part);
-  const errText = part.state.error?.message;
+  return {
+    command: typeof input.command === 'string' ? input.command : '',
+    description: typeof input.description === 'string' ? input.description : '',
+    cwd: typeof input.workdir === 'string' ? input.workdir : '',
+    running: part.state.status === 'running' || part.state.status === 'pending',
+    failed:
+      part.state.status === 'error' ||
+      !!part.state.error ||
+      (typeof exit === 'number' && exit !== 0),
+    exit,
+    output: outputOf(part),
+    errText: part.state.error?.message,
+  };
+}
+
+/** The one-line result shown under a finished command. */
+function exitLabel(failed: boolean, exit: unknown, output: string): string {
+  if (failed) return typeof exit === 'number' ? `exited with code ${exit}` : 'failed';
+  return output ? 'done' : 'done · no output';
+}
+
+export function Terminal({ part }: Readonly<{ part: ToolPart }>) {
+  const { command, description, cwd, running, failed, exit, output, errText } = shellState(part);
 
   const [blink, setBlink] = useState(true);
   useEffect(() => {
@@ -127,9 +152,9 @@ export function Terminal({ part }: { part: ToolPart }) {
             <Text style={{ color: GREEN }}>$ </Text>
             <Text style={{ color: '#FFFFFF' }}>{command}</Text>
             {output ? '\n' : ''}
-            {parseAnsi(output).map((seg, i) => (
+            {keyed(parseAnsi(output)).map(({ key, seg }) => (
               <Text
-                key={i}
+                key={key}
                 style={{
                   color: seg.color ?? FG,
                   fontFamily: seg.bold ? Fonts.monoSemibold : Fonts.mono,
@@ -150,13 +175,7 @@ export function Terminal({ part }: { part: ToolPart }) {
       {!running ? (
         <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
           <Text style={{ ...mono, fontSize: 11, color: failed ? RED : DIM }}>
-            {failed
-              ? typeof exit === 'number'
-                ? `exited with code ${exit}`
-                : 'failed'
-              : output
-                ? 'done'
-                : 'done · no output'}
+            {exitLabel(failed, exit, output)}
           </Text>
         </View>
       ) : null}

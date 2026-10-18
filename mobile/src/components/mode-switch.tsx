@@ -6,6 +6,7 @@ import { Animated, Easing, View } from 'react-native';
 import { ND, curve } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale, useReduceMotion } from '@/components/ui';
+import { type Palette } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type Mode = 'build' | 'plan';
@@ -19,15 +20,21 @@ const ITEMS: { mode: Mode; label: string; icon: string }[] = [
   { mode: 'plan', label: 'Plan', icon: 'map-outline' },
 ];
 
+/** Active items are tinted by side: plan takes the accent, build the clay. */
+function itemColor(active: boolean, plan: boolean, theme: Palette): string {
+  if (!active) return theme.inkFaint;
+  return plan ? theme.accent : theme.clay;
+}
+
 export function ModeSwitch({
   mode,
   onChange,
   disabled,
-}: {
+}: Readonly<{
   mode: Mode;
   onChange: (mode: Mode) => void;
   disabled?: boolean;
-}) {
+}>) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const [x] = useState(() => new Animated.Value(mode === 'plan' ? 1 : 0));
@@ -85,7 +92,7 @@ export function ModeSwitch({
             }}
             disabled={disabled}
             scaleTo={0.96}
-            accessibilityRole="radio"
+            accessibilityRole="button"
             accessibilityState={{ selected: active }}
             accessibilityLabel={`${it.label} mode`}
             style={{
@@ -99,7 +106,7 @@ export function ModeSwitch({
             <Glyph
               name={it.icon}
               size={14}
-              color={active ? (it.mode === 'plan' ? theme.accent : theme.clay) : theme.inkFaint}
+              color={itemColor(active, it.mode === 'plan', theme)}
             />
             <ThemedText
               type="footnote"

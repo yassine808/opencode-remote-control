@@ -35,7 +35,7 @@ function summarize(items: GroupItem[]): { kind: Kind; count: number }[] {
   return order.map((kind) => ({ kind, count: counts.get(kind.key) ?? 0 }));
 }
 
-function KindIcon({ kind, live, color }: { kind: Kind; live: boolean; color: string }) {
+function KindIcon({ kind, live, color }: Readonly<{ kind: Kind; live: boolean; color: string }>) {
   const reduce = useReduceMotion();
   const loop = useLoop(1200, live && !reduce);
   const opacity = loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] });
@@ -48,14 +48,14 @@ function KindIcon({ kind, live, color }: { kind: Kind; live: boolean; color: str
   );
 }
 
-export function ActivityGroup({ items, active }: { items: GroupItem[]; active: boolean }) {
+export function ActivityGroup({ items, active }: Readonly<{ items: GroupItem[]; active: boolean }>) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const [open, setOpen] = useState(false);
 
   const kinds = summarize(items);
   const label = kinds.map((k) => plural(k.kind, k.count)).join(', ');
-  const newest = kinds[kinds.length - 1]?.kind.key;
+  const newest = kinds.at(-1)?.kind.key;
 
 
   return (

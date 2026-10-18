@@ -19,18 +19,18 @@ interface Q {
 }
 
 function readQuestions(part: ToolPart): Q[] {
-  const raw = (part.state.input ?? {}).questions;
+  const raw = part.state.input?.questions;
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((q): q is Record<string, unknown> => !!q && typeof q === 'object')
     .map((q) => ({
-      question: String(q.question ?? ''),
+      question: typeof q.question === 'string' ? q.question : '',
       header: typeof q.header === 'string' ? q.header : undefined,
       options: Array.isArray(q.options)
         ? q.options
             .filter((o): o is Record<string, unknown> => !!o && typeof o === 'object')
             .map((o) => ({
-              label: String(o.label ?? ''),
+              label: typeof o.label === 'string' ? o.label : '',
               description: typeof o.description === 'string' ? o.description : undefined,
             }))
         : [],
@@ -60,7 +60,68 @@ function readAnswers(part: ToolPart, qs: Q[]): string[][] {
   });
 }
 
-export function QuestionCard({ part }: { part: ToolPart }) {
+/** What sits under one question: the picks, the options while waiting, or the outcome. */
+function AnswerBlock({
+  question,
+  picked,
+  waiting,
+  failed,
+}: Readonly<{ question: Q; picked: string[]; waiting: boolean; failed: boolean }>) {
+  const theme = useTheme();
+  if (picked.length > 0) {
+    return (
+      <View style={{ gap: 6 }}>
+        {picked.map((a) => (
+          <PopIn key={a} from={0.6}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                gap: 8,
+                backgroundColor: withAlpha(theme.positive, 0.12),
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                alignSelf: 'flex-start',
+                maxWidth: '100%',
+              }}>
+              <Glyph name="checkmark-circle" size={14} color={theme.positive} />
+              <ThemedText type="callout" style={{ color: theme.ink, flexShrink: 1 }}>
+                {a}
+              </ThemedText>
+            </View>
+          </PopIn>
+        ))}
+      </View>
+    );
+  }
+  if (waiting) {
+    return (
+      <View style={{ gap: 4 }}>
+        {question.options.map((o) => (
+          <View key={o.label} style={{ flexDirection: 'row', gap: 8 }}>
+            <Glyph name="ellipse-outline" size={13} color={theme.inkFaint} style={{ marginTop: 3 }} />
+            <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
+              {o.label}
+              {o.description ? (
+                <ThemedText type="callout" style={{ color: theme.inkFaint }}>
+                  {` — ${o.description}`}
+                </ThemedText>
+              ) : null}
+            </ThemedText>
+          </View>
+        ))}
+      </View>
+    );
+  }
+  return (
+    <ThemedText type="callout" style={{ color: failed ? theme.negative : theme.inkFaint }}>
+      {failed ? 'Dismissed' : 'No answer'}
+    </ThemedText>
+  );
+}
+
+export function QuestionCard({ part }: Readonly<{ part: ToolPart }>) {
   const theme = useTheme();
   const qs = readQuestions(part);
   const answers = readAnswers(part, qs);
@@ -89,67 +150,19 @@ export function QuestionCard({ part }: { part: ToolPart }) {
         </ThemedText>
       </View>
 
-      {qs.map((q, i) => {
-        const picked = answers[i] ?? [];
-        return (
-          <View key={`${i}-${q.question}`} style={{ gap: 8 }}>
-            {q.header ? (
-              <ThemedText type="caption" style={{ color: theme.inkFaint }}>
-                {q.header}
-              </ThemedText>
-            ) : null}
-            <ThemedText type="callout" weight="semibold" style={{ color: theme.ink }}>
-              {q.question}
+      {qs.map((q, i) => (
+        <View key={`${i}-${q.question}`} style={{ gap: 8 }}>
+          {q.header ? (
+            <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+              {q.header}
             </ThemedText>
-
-            {picked.length > 0 ? (
-              <View style={{ gap: 6 }}>
-                {picked.map((a) => (
-                  <PopIn key={a} from={0.6}>
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        backgroundColor: withAlpha(theme.positive, 0.12),
-                        borderRadius: 8,
-                        paddingHorizontal: 10,
-                        paddingVertical: 8,
-                        alignSelf: 'flex-start',
-                        maxWidth: '100%',
-                      }}>
-                      <Glyph name="checkmark-circle" size={14} color={theme.positive} />
-                      <ThemedText type="callout" style={{ color: theme.ink, flexShrink: 1 }}>
-                        {a}
-                      </ThemedText>
-                    </View>
-                  </PopIn>
-                ))}
-              </View>
-            ) : waiting ? (
-              <View style={{ gap: 4 }}>
-                {q.options.map((o) => (
-                  <View key={o.label} style={{ flexDirection: 'row', gap: 8 }}>
-                    <Glyph name="ellipse-outline" size={13} color={theme.inkFaint} style={{ marginTop: 3 }} />
-                    <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
-                      {o.label}
-                      {o.description ? (
-                        <ThemedText type="callout" style={{ color: theme.inkFaint }}>
-                          {` — ${o.description}`}
-                        </ThemedText>
-                      ) : null}
-                    </ThemedText>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <ThemedText type="callout" style={{ color: failed ? theme.negative : theme.inkFaint }}>
-                {failed ? 'Dismissed' : 'No answer'}
-              </ThemedText>
-            )}
-          </View>
-        );
-      })}
+          ) : null}
+          <ThemedText type="callout" weight="semibold" style={{ color: theme.ink }}>
+            {q.question}
+          </ThemedText>
+          <AnswerBlock question={q} picked={answers[i] ?? []} waiting={waiting} failed={failed} />
+        </View>
+      ))}
 
       {waiting ? (
         <ThemedText type="caption" style={{ color: theme.inkFaint }}>

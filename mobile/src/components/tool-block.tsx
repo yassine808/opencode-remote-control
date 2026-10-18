@@ -18,9 +18,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Glyph, PressableScale } from '@/components/ui';
 import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import type { ToolPart } from '@/lib/types';
+import type { ToolContentBlock, ToolPart } from '@/lib/types';
 import { basename } from '@/lib/paths';
-import { kindOfTool } from '@/lib/tool-meta';
+import { kindOfTool, type Kind } from '@/lib/tool-meta';
 
 const COLLAPSED_LINES = 12;
 
@@ -47,7 +47,42 @@ function previewFor(part: ToolPart): string | null {
   return null;
 }
 
-function CodePreview({ code }: { code: string }) {
+/** Image content blocks carried by a tool result. */
+function imageBlocks(part: ToolPart): ToolContentBlock[] {
+  return (part.state.content ?? []).filter(
+    (block) =>
+      block.type === 'file' &&
+      typeof block.uri === 'string' &&
+      typeof block.mime === 'string' &&
+      block.mime.startsWith('image/') &&
+      (block.uri.startsWith('data:') || block.uri.startsWith('http')),
+  );
+}
+
+/** The leading status mark: spinner while running, then the outcome. */
+function StatusIcon({
+  running,
+  errored,
+  sawRunning,
+  kind,
+}: Readonly<{ running: boolean; errored: boolean; sawRunning: boolean; kind: Kind }>) {
+  const theme = useTheme();
+  if (running) {
+    return (
+      <View style={{ width: 13, height: 13, alignItems: 'center', justifyContent: 'center' }}>
+        <SpinnerRing size={13} stroke={1.75} color={theme.clay} duration={900} />
+      </View>
+    );
+  }
+  const glyph = errored ? (
+    <Glyph name="close-circle-outline" size={13} color={theme.negative} />
+  ) : (
+    <Glyph set={kind.set} name={kind.icon} size={13} color={theme.inkMuted} />
+  );
+  return sawRunning ? <PopIn from={0.3}>{glyph}</PopIn> : glyph;
+}
+
+function CodePreview({ code }: Readonly<{ code: string }>) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
 
@@ -93,7 +128,7 @@ function CodePreview({ code }: { code: string }) {
   );
 }
 
-export function ToolBlock({ part }: { part: ToolPart }) {
+export function ToolBlock({ part }: Readonly<{ part: ToolPart }>) {
   const theme = useTheme();
 
   const kind = kindOfTool(part.name);
@@ -110,14 +145,8 @@ export function ToolBlock({ part }: { part: ToolPart }) {
 
   const preview = previewFor(part);
   const errorMessage = errored ? part.state.error?.message : undefined;
-  const images = (part.state.content ?? []).filter(
-    (block) =>
-      block.type === 'file' &&
-      typeof block.uri === 'string' &&
-      typeof block.mime === 'string' &&
-      block.mime.startsWith('image/') &&
-      (block.uri.startsWith('data:') || block.uri.startsWith('http')),
-  );
+  const images = imageBlocks(part);
+  const shellToggle = shellOpen ? 'Hide' : 'Show';
 
   return (
     <View style={{ gap: 6 }}>
@@ -126,7 +155,7 @@ export function ToolBlock({ part }: { part: ToolPart }) {
         disabled={!isShell}
         scaleTo={0.98}
         hitSlop={6}
-        accessibilityLabel={isShell ? `${shellOpen ? 'Hide' : 'Show'} terminal` : undefined}
+        accessibilityLabel={isShell ? `${shellToggle} terminal` : undefined}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -137,25 +166,7 @@ export function ToolBlock({ part }: { part: ToolPart }) {
           maxWidth: '100%',
         }}>
         {running ? <Sweep color={withAlpha(theme.clay, 0.18)} duration={1900} /> : null}
-        {running ? (
-          <View style={{ width: 13, height: 13, alignItems: 'center', justifyContent: 'center' }}>
-            <SpinnerRing size={13} stroke={1.75} color={theme.clay} duration={900} />
-          </View>
-        ) : errored ? (
-          sawRunning ? (
-            <PopIn from={0.3}>
-              <Glyph name="close-circle-outline" size={13} color={theme.negative} />
-            </PopIn>
-          ) : (
-            <Glyph name="close-circle-outline" size={13} color={theme.negative} />
-          )
-        ) : sawRunning ? (
-          <PopIn from={0.3}>
-            <Glyph set={kind.set} name={kind.icon} size={13} color={theme.inkMuted} />
-          </PopIn>
-        ) : (
-          <Glyph set={kind.set} name={kind.icon} size={13} color={theme.inkMuted} />
-        )}
+        <StatusIcon running={running} errored={errored} sawRunning={sawRunning} kind={kind} />
         <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
           {titleFor(part)}
         </ThemedText>
@@ -174,7 +185,7 @@ export function ToolBlock({ part }: { part: ToolPart }) {
         />
       ))}
 
-      {typeof errorMessage === 'string' && errorMessage.length > 0 ? (
+      {errorMessage ? (
         <ThemedText
           type="footnote"
           style={{ color: theme.negative, fontFamily: Fonts.mono, lineHeight: 18 }}>

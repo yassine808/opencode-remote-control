@@ -44,6 +44,176 @@ function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes))} B`;
 }
 
+/** The staged files, as quiet chips above the field. */
+function AttachmentChips({
+  files,
+  onRemove,
+}: Readonly<{ files: Attachment[]; onRemove?: (index: number) => void }>) {
+  const theme = useTheme();
+  if (files.length === 0) return null;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+      {files.map((a, i) => (
+        <View
+          key={`${a.name}-${i}`}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            height: 24,
+            paddingLeft: 8,
+            paddingRight: 4,
+            borderRadius: 12,
+            backgroundColor: theme.surfaceRaised,
+            maxWidth: 240,
+          }}>
+          <Glyph set="mci" name="paperclip" size={11} color={theme.inkFaint} />
+          <ThemedText
+            type="caption"
+            numberOfLines={1}
+            style={{ color: theme.inkMuted, flexShrink: 1 }}>
+            {a.name}
+          </ThemedText>
+          <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+            {formatSize(a.size)}
+          </ThemedText>
+          {onRemove ? (
+            <PressableScale
+              onPress={() => onRemove(i)}
+              hitSlop={8}
+              scaleTo={0.85}
+              accessibilityLabel={`Remove ${a.name}`}
+              style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+              <Glyph name="close" size={12} color={theme.inkFaint} />
+            </PressableScale>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** The session's current model, as the quiet control-row pill. */
+function ModelPill({
+  label,
+  onPress,
+  compact,
+}: Readonly<{ label?: string | null; onPress?: () => void; compact: boolean }>) {
+  const theme = useTheme();
+  if (!label) return null;
+  return (
+    <PressableScale
+      onPress={onPress}
+      disabled={!onPress}
+      scaleTo={0.96}
+      accessibilityLabel={`Change model, currently ${label}`}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        height: 28,
+        paddingHorizontal: 10,
+        borderRadius: 14,
+        backgroundColor: theme.inkWell,
+        borderWidth: 1,
+        borderColor: theme.inkControl,
+        maxWidth: compact ? 150 : 220,
+      }}>
+      <ThemedText
+        type="caption"
+        numberOfLines={1}
+        style={{ color: theme.inkMuted, flexShrink: 1 }}>
+        {label}
+      </ThemedText>
+      <Glyph name="chevron-down" size={11} color={theme.inkFaint} />
+    </PressableScale>
+  );
+}
+
+/** The effort level — only rendered when the model has effort variants. */
+function EffortPill({
+  label,
+  onPress,
+}: Readonly<{ label?: string | null; onPress?: () => void }>) {
+  const theme = useTheme();
+  if (!label) return null;
+  return (
+    <PressableScale
+      onPress={onPress}
+      disabled={!onPress}
+      scaleTo={0.96}
+      accessibilityLabel={`Change effort, currently ${label}`}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        height: 28,
+        paddingHorizontal: 10,
+        borderRadius: 14,
+        backgroundColor: theme.inkWell,
+        borderWidth: 1,
+        borderColor: theme.inkControl,
+        maxWidth: 110,
+      }}>
+      <Glyph set="mci" name="speedometer" size={13} color={theme.inkFaint} />
+      <ThemedText
+        type="caption"
+        numberOfLines={1}
+        style={{ color: theme.inkMuted, flexShrink: 1, textTransform: 'capitalize' }}>
+        {label}
+      </ThemedText>
+    </PressableScale>
+  );
+}
+
+/** The one accent control: Send, or Stop while running. */
+function SendButton({
+  primary,
+  canSend,
+  busy,
+  onSend,
+  onStop,
+}: Readonly<{
+  primary: boolean;
+  canSend: boolean;
+  busy?: boolean;
+  onSend: () => void;
+  onStop: () => void;
+}>) {
+  const theme = useTheme();
+
+  let onPress: (() => void) | undefined;
+  if (primary) onPress = onStop;
+  else if (canSend && !busy) onPress = onSend;
+
+  let content: React.ReactNode;
+  if (busy && !primary) {
+    content = <ActivityIndicator size="small" color={theme.onAccent} />;
+  } else if (primary) {
+    content = <Ionicons name="stop" size={15} color={canSend ? theme.onAccent : theme.inkMuted} />;
+  } else {
+    content = <Ionicons name="arrow-up" size={17} color={canSend ? theme.onAccent : theme.inkMuted} />;
+  }
+
+  return (
+    <PressableScale
+      onPress={onPress}
+      disabled={!canSend || (busy && !primary)}
+      scaleTo={0.92}
+      accessibilityLabel={primary ? 'Stop' : 'Send'}
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: canSend ? theme.accent : theme.inkControl,
+      }}>
+      {content}
+    </PressableScale>
+  );
+}
+
 export function Composer({
   value,
   onChangeText,
@@ -59,7 +229,7 @@ export function Composer({
   attachments,
   onAttachPress,
   onRemoveAttachment,
-}: {
+}: Readonly<{
   value: string;
   onChangeText: (text: string) => void;
   running: boolean;
@@ -78,7 +248,7 @@ export function Composer({
   attachments?: Attachment[];
   onAttachPress?: () => void;
   onRemoveAttachment?: (index: number) => void;
-}) {
+}>) {
   const theme = useTheme();
   const [height, setHeight] = useState(22);
 
@@ -99,46 +269,7 @@ export function Composer({
         paddingVertical: 10,
         gap: 8,
       }}>
-      {files.length > 0 ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          {files.map((a, i) => (
-            <View
-              key={`${a.name}-${i}`}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                height: 24,
-                paddingLeft: 8,
-                paddingRight: 4,
-                borderRadius: 12,
-                backgroundColor: theme.surfaceRaised,
-                maxWidth: 240,
-              }}>
-              <Glyph set="mci" name="paperclip" size={11} color={theme.inkFaint} />
-              <ThemedText
-                type="caption"
-                numberOfLines={1}
-                style={{ color: theme.inkMuted, flexShrink: 1 }}>
-                {a.name}
-              </ThemedText>
-              <ThemedText type="caption" style={{ color: theme.inkFaint }}>
-                {formatSize(a.size)}
-              </ThemedText>
-              {onRemoveAttachment ? (
-                <PressableScale
-                  onPress={() => onRemoveAttachment(i)}
-                  hitSlop={8}
-                  scaleTo={0.85}
-                  accessibilityLabel={`Remove ${a.name}`}
-                  style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
-                  <Glyph name="close" size={12} color={theme.inkFaint} />
-                </PressableScale>
-              ) : null}
-            </View>
-          ))}
-        </View>
-      ) : null}
+      <AttachmentChips files={files} onRemove={onRemoveAttachment} />
 
       <TextInput
         multiline
@@ -198,86 +329,10 @@ export function Composer({
           }}>
           <Glyph name="add" size={17} color={theme.inkMuted} />
         </PressableScale>
-        {modelLabel ? (
-          <PressableScale
-            onPress={onModelPress}
-            disabled={!onModelPress}
-            scaleTo={0.96}
-            accessibilityLabel={`Change model, currently ${modelLabel}`}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              height: 28,
-              paddingHorizontal: 10,
-              borderRadius: 14,
-              backgroundColor: theme.inkWell,
-              borderWidth: 1,
-              borderColor: theme.inkControl,
-              maxWidth: effortLabel ? 150 : 220,
-            }}>
-            <ThemedText
-              type="caption"
-              numberOfLines={1}
-              style={{ color: theme.inkMuted, flexShrink: 1 }}>
-              {modelLabel}
-            </ThemedText>
-            <Glyph name="chevron-down" size={11} color={theme.inkFaint} />
-          </PressableScale>
-        ) : null}
-        {effortLabel ? (
-          <PressableScale
-            onPress={onEffortPress}
-            disabled={!onEffortPress}
-            scaleTo={0.96}
-            accessibilityLabel={`Change effort, currently ${effortLabel}`}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              height: 28,
-              paddingHorizontal: 10,
-              borderRadius: 14,
-              backgroundColor: theme.inkWell,
-              borderWidth: 1,
-              borderColor: theme.inkControl,
-              maxWidth: 110,
-            }}>
-            <Glyph set="mci" name="speedometer" size={13} color={theme.inkFaint} />
-            <ThemedText
-              type="caption"
-              numberOfLines={1}
-              style={{ color: theme.inkMuted, flexShrink: 1, textTransform: 'capitalize' }}>
-              {effortLabel}
-            </ThemedText>
-          </PressableScale>
-        ) : null}
+        <ModelPill label={modelLabel} onPress={onModelPress} compact={!!effortLabel} />
+        <EffortPill label={effortLabel} onPress={onEffortPress} />
         <View style={{ flex: 1 }} />
-        <PressableScale
-          onPress={primary ? onStop : canSend && !busy ? onSend : undefined}
-          disabled={!canSend || (busy && !primary)}
-          scaleTo={0.92}
-          accessibilityLabel={primary ? 'Stop' : 'Send'}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: canSend ? theme.accent : theme.inkControl,
-          }}>
-          {busy && !primary ? (
-            <ActivityIndicator size="small" color={theme.onAccent} />
-          ) : primary ? (
-            <Ionicons name="stop" size={15} color={canSend ? theme.onAccent : theme.inkMuted} />
-          ) : (
-            <Ionicons
-              name="arrow-up"
-              size={17}
-              color={canSend ? theme.onAccent : theme.inkMuted}
-            />
-          )}
-        </PressableScale>
+        <SendButton primary={primary} canSend={canSend} busy={busy} onSend={onSend} onStop={onStop} />
       </View>
     </View>
   );

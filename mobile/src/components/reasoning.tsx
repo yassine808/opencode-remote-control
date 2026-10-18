@@ -25,30 +25,13 @@ import { useTheme } from '@/hooks/use-theme';
 const LIVE_HEIGHT = 132;
 const EXPANDED_HEIGHT = 280;
 
-export function ReasoningBlock({
-  text,
-  isActive,
-  knownMs,
-}: {
-  text: string;
-  isActive: boolean;
-  /** duration from history (when this wasn't watched live) */
-  knownMs?: number;
-}) {
-  const theme = useTheme();
-  const reduce = useReduceMotion();
-  const [expanded, setExpanded] = useState(false);
-  /** The body stays mounted while it folds shut, then drops out. */
-  const [bodyMounted, setBodyMounted] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
-  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-  const [rotation] = useState(() => new Animated.Value(0));
-  const [height] = useState(() => new Animated.Value(0));
-
-  // The thinking clock. `now` ticks while live, which dates the settle; a
-  // fresh start is taken by the first tick after the model thinks again.
-  // (Timestamps are state, not refs, so the React Compiler can optimise the
-  // block — Date.now() itself is not allowed during render.)
+/**
+ * The settle clock. `now` ticks while live, which dates the settle; a fresh
+ * start is taken by the first tick after the model thinks again.
+ * (Timestamps are state, not refs, so the React Compiler can optimise the
+ * block — Date.now() itself is not allowed during render.)
+ */
+function useThinkingClock(isActive: boolean, knownMs?: number): string {
   const [now, setNow] = useState(() => Date.now());
   const [startedAt, setStartedAt] = useState<number | null>(() => Date.now());
   const [endedAt, setEndedAt] = useState<number | null>(null);
@@ -76,23 +59,27 @@ export function ReasoningBlock({
     return () => clearInterval(t);
   }, [isActive]);
 
-  // While live and open, always show the newest line, never animate there.
-  useEffect(() => {
-    if (isActive && expanded) scrollRef.current?.scrollToEnd({ animated: false });
-  }, [text, isActive, expanded]);
+  const seconds =
+    startedAt == null || endedAt == null ? 0 : Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  // Watched live → the live clock; opened from history → the recorded/estimated time.
+  const shownMs = seconds >= 1 ? seconds * 1000 : (knownMs ?? 0);
+  return `Thought for ${fmtElapsed(Math.max(1000, shownMs))}`;
+}
 
-  // Chevron.
-  useEffect(() => {
-    Animated.timing(rotation, {
-      toValue: expanded ? 1 : 0,
-      duration: Motion.settle * 1000,
-      easing: curve,
-      useNativeDriver: ND,
-    }).start();
-  }, [expanded, rotation]);
+/** Target height of the body window — live windows are shorter than settled ones. */
+function bodyHeightFor(expanded: boolean, isActive: boolean): number {
+  if (expanded) return isActive ? LIVE_HEIGHT : EXPANDED_HEIGHT;
+  return EXPANDED_HEIGHT;
+}
 
-  // Unfold / fold. Height can't use the native driver; the body is small.
-  const targetHeight = expanded ? (isActive ? LIVE_HEIGHT : EXPANDED_HEIGHT) : 0;
+/** Unfold / fold. Height can't use the native driver; the body is small. */
+function useFoldHeight(expanded: boolean, isActive: boolean, reduce: boolean) {
+  const [height] = useState(() => new Animated.Value(0));
+  /** The body stays mounted while it folds shut, then drops out. */
+  const [bodyMounted, setBodyMounted] = useState(false);
+  const openHeight = isActive ? LIVE_HEIGHT : EXPANDED_HEIGHT;
+  const targetHeight = expanded ? openHeight : 0;
+
   useEffect(() => {
     if (expanded) setBodyMounted(true);
     if (reduce) {
@@ -112,17 +99,70 @@ export function ReasoningBlock({
     return () => anim.stop();
   }, [targetHeight, expanded, reduce, height]);
 
+  return { height, bodyMounted };
+}
+
+/** Top fade while live, bottom fade once settled — only when the text overflows. */
+function OverflowFade({
+  overflowing,
+  live,
+  surface,
+}: Readonly<{ overflowing: boolean; live: boolean; surface: string }>) {
+  if (!overflowing) return null;
+  return live ? (
+    <LinearGradient
+      pointerEvents="none"
+      colors={[surface, `${surface}00`]}
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 14 }}
+    />
+  ) : (
+    <LinearGradient
+      pointerEvents="none"
+      colors={[`${surface}00`, surface]}
+      style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 14 }}
+    />
+  );
+}
+
+export function ReasoningBlock({
+  text,
+  isActive,
+  knownMs,
+}: Readonly<{
+  text: string;
+  isActive: boolean;
+  /** duration from history (when this wasn't watched live) */
+  knownMs?: number;
+}>) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const [rotation] = useState(() => new Animated.Value(0));
+  const { height, bodyMounted } = useFoldHeight(expanded, isActive, reduce);
+  const settledLabel = useThinkingClock(isActive, knownMs);
+
+  // While live and open, always show the newest line, never animate there.
+  useEffect(() => {
+    if (isActive && expanded) scrollRef.current?.scrollToEnd({ animated: false });
+  }, [text, isActive, expanded]);
+
+  // Chevron.
+  useEffect(() => {
+    Animated.timing(rotation, {
+      toValue: expanded ? 1 : 0,
+      duration: Motion.settle * 1000,
+      easing: curve,
+      useNativeDriver: ND,
+    }).start();
+  }, [expanded, rotation]);
+
   // The brain breathes while the model thinks.
   const breathe = useLoop(1500, isActive && !reduce);
   const brainGlow = breathe.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] });
 
-  const seconds =
-    startedAt == null || endedAt == null ? 0 : Math.max(0, Math.round((endedAt - startedAt) / 1000));
-  // Watched live → the live clock; opened from history → the recorded/estimated time.
-  const shownMs = seconds >= 1 ? seconds * 1000 : (knownMs ?? 0);
-  const settledLabel = `Thought for ${fmtElapsed(Math.max(1000, shownMs))}`;
-
-  const bodyHeight = expanded ? (isActive ? LIVE_HEIGHT : EXPANDED_HEIGHT) : EXPANDED_HEIGHT;
+  const bodyHeight = bodyHeightFor(expanded, isActive);
 
   return (
     <View
@@ -192,20 +232,7 @@ export function ReasoningBlock({
               </ThemedText>
             </ScrollView>
 
-            {overflowing && isActive ? (
-              <LinearGradient
-                pointerEvents="none"
-                colors={[theme.surface, `${theme.surface}00`]}
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 14 }}
-              />
-            ) : null}
-            {overflowing && !isActive ? (
-              <LinearGradient
-                pointerEvents="none"
-                colors={[`${theme.surface}00`, theme.surface]}
-                style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 14 }}
-              />
-            ) : null}
+            <OverflowFade overflowing={overflowing} live={isActive} surface={theme.surface} />
           </View>
         </Animated.View>
       ) : null}

@@ -45,7 +45,7 @@ function lookFor(activity: string): Look {
 }
 
 /** Just the icon — no circle, no halo — with a motion that says what it is doing. */
-function ActivityIcon({ activity }: { activity: string }) {
+function ActivityIcon({ activity }: Readonly<{ activity: string }>) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const look = lookFor(activity);
@@ -104,7 +104,7 @@ function escalationNote(elapsedMs: number): string | null {
   return 'Still working — Stop is available';
 }
 
-export function WorkingIndicator({ activity, since }: { activity: string; since: number }) {
+export function WorkingIndicator({ activity, since }: Readonly<{ activity: string; since: number }>) {
   const theme = useTheme();
   // A ticking clock; the label is derived from it, so a change in activity
   // lands on the very next render instead of waiting for a timer.

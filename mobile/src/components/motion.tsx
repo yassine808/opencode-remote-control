@@ -40,7 +40,7 @@ const LINEAR = Easing.linear;
 export function withAlpha(color: string, alpha: number): string {
   const m = /^#([0-9a-f]{6})$/i.exec(color);
   if (!m) return color;
-  const n = parseInt(m[1], 16);
+  const n = Number.parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
@@ -71,14 +71,14 @@ export function FadeRise({
   duration = 360,
   enabled = true,
   style,
-}: {
+}: Readonly<{
   children?: ReactNode;
   delay?: number;
   distance?: number;
   duration?: number;
   enabled?: boolean;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const animate = enabled && !reduce;
   const [p] = useState(() => new Animated.Value(enabled ? 0 : 1));
@@ -120,11 +120,11 @@ export function PopIn({
   children,
   from = 0.4,
   style,
-}: {
+}: Readonly<{
   children?: ReactNode;
   from?: number;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const [p] = useState(() => new Animated.Value(reduce ? 1 : 0));
 
@@ -165,13 +165,13 @@ function RippleRing({
   delay,
   duration,
   maxScale,
-}: {
+}: Readonly<{
   color: string;
   size: number;
   delay: number;
   duration: number;
   maxScale: number;
-}) {
+}>) {
   const [p] = useState(() => new Animated.Value(0));
   useEffect(() => {
     p.setValue(0);
@@ -210,28 +210,33 @@ export function PulseDot({
   maxScale = 3.2,
   period = 1900,
   active = true,
-}: {
+}: Readonly<{
   color: string;
   size?: number;
   rings?: number;
   maxScale?: number;
   period?: number;
   active?: boolean;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const live = active && !reduce;
   const breathe = useLoop(1400, live);
   const scale = breathe.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.22, 1] });
 
+  const ripples = Array.from({ length: rings }, (_, i) => ({
+    key: `ring-${i}`,
+    delay: (period / rings) * i,
+  }));
+
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       {live
-        ? Array.from({ length: rings }, (_, i) => (
+        ? ripples.map((ripple) => (
             <RippleRing
-              key={i}
+              key={ripple.key}
               color={color}
               size={size}
-              delay={(period / rings) * i}
+              delay={ripple.delay}
               duration={period}
               maxScale={maxScale}
             />
@@ -258,23 +263,29 @@ export function Equalizer({
   barWidth = 3,
   gap = 2,
   active = true,
-}: {
+}: Readonly<{
   color: string;
   bars?: number;
   height?: number;
   barWidth?: number;
   gap?: number;
   active?: boolean;
-}) {
+}>) {
   const reduce = useReduceMotion();
-  const [values] = useState(() => Array.from({ length: bars }, () => new Animated.Value(0.4)));
+  // Each bar carries a stable key alongside its value for the life of the mount.
+  const [meters] = useState(() =>
+    Array.from({ length: bars }, (_, i) => ({
+      key: `bar-${i}`,
+      value: new Animated.Value(0.4),
+    })),
+  );
 
   useEffect(() => {
     if (!active || reduce) {
-      values.forEach((v) => v.setValue(0.6));
+      meters.forEach(({ value }) => value.setValue(0.6));
       return;
     }
-    const running = values.map((v, i) => {
+    const running = meters.map(({ value: v }, i) => {
       const d = 340 + ((i * 97) % 240);
       const loop = Animated.loop(
         Animated.sequence([
@@ -295,19 +306,19 @@ export function Equalizer({
         clearTimeout(t);
         loop.stop();
       });
-  }, [active, reduce, values]);
+  }, [active, reduce, meters]);
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap, height }}>
-      {values.map((v, i) => (
+      {meters.map((meter) => (
         <Animated.View
-          key={i}
+          key={meter.key}
           style={{
             width: barWidth,
             height,
             borderRadius: barWidth / 2,
             backgroundColor: color,
-            transform: [{ scaleY: v }],
+            transform: [{ scaleY: meter.value }],
           }}
         />
       ))}
@@ -326,14 +337,14 @@ export function WaveText({
   active = true,
   low = 0.38,
   duration = 1800,
-}: {
+}: Readonly<{
   text: string;
   type?: ThemedTextType;
   style?: StyleProp<TextStyle>;
   active?: boolean;
   low?: number;
   duration?: number;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const live = active && !reduce;
   const p = useLoop(duration, live);
@@ -376,7 +387,7 @@ export function Sweep({
   bandWidth = 0.55,
   active = true,
   style,
-}: {
+}: Readonly<{
   /** `#RRGGBB` — the band's peak colour (alpha is applied here). */
   color: string;
   duration?: number;
@@ -384,7 +395,7 @@ export function Sweep({
   bandWidth?: number;
   active?: boolean;
   style?: StyleProp<ViewStyle>;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const live = active && !reduce;
   const [w, setW] = useState(0);
@@ -426,12 +437,12 @@ export function BreathingBorder({
   radius = 12,
   width = 1,
   active = true,
-}: {
+}: Readonly<{
   color: string;
   radius?: number;
   width?: number;
   active?: boolean;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const live = active && !reduce;
   const p = useLoop(2600, live);
@@ -440,7 +451,11 @@ export function BreathingBorder({
     <Animated.View
       pointerEvents="none"
       style={{
-        ...StyleSheet.absoluteFillObject,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
         borderRadius: radius,
         borderWidth: width,
         borderColor: color,
@@ -465,7 +480,7 @@ export function ProgressRing({
   duration = 900,
   animated = true,
   children,
-}: {
+}: Readonly<{
   progress: number;
   size?: number;
   stroke?: number;
@@ -475,7 +490,7 @@ export function ProgressRing({
   /** false → no sweep: the ring just shows the value */
   animated?: boolean;
   children?: ReactNode;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const clamp = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
   const [p] = useState(() => new Animated.Value(animated ? 0 : clamp(progress)));
@@ -551,14 +566,14 @@ export function SpinnerRing({
   color,
   duration = 1100,
   active = true,
-}: {
+}: Readonly<{
   size?: number;
   stroke?: number;
   /** `#RRGGBB` */
   color: string;
   duration?: number;
   active?: boolean;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const live = active && !reduce;
   const p = useLoop(duration, live);
@@ -592,14 +607,14 @@ export function AnimatedNumber({
   type = 'body',
   weight,
   style,
-}: {
+}: Readonly<{
   value: number;
   format?: (n: number) => string;
   duration?: number;
   type?: ThemedTextType;
   weight?: 'regular' | 'medium' | 'semibold' | 'bold';
   style?: StyleProp<TextStyle>;
-}) {
+}>) {
   const reduce = useReduceMotion();
   const [anim] = useState(() => new Animated.Value(0));
   const [shown, setShown] = useState(() => (reduce ? value : 0));
