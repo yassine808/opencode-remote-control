@@ -131,7 +131,7 @@ function ProjectRow({
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
-  const rotation = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+  const [rotation] = useState(() => new Animated.Value(expanded ? 1 : 0));
 
   useEffect(() => {
     if (reduce) {

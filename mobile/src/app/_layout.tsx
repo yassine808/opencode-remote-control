@@ -1,4 +1,3 @@
-import { useFonts } from '@expo-google-fonts/inter';
 import {
   Inter_400Regular,
   Inter_400Regular_Italic,
@@ -6,6 +5,7 @@ import {
   Inter_600SemiBold,
   Inter_600SemiBold_Italic,
   Inter_700Bold,
+  useFonts,
 } from '@expo-google-fonts/inter';
 import {
   RobotoMono_400Regular,

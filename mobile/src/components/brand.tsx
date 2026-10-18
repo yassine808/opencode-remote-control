@@ -49,8 +49,8 @@ export function glyphWidth(text: string): number {
 }
 
 /** Every inked cell as [column, row]. */
-function glyphCells(text: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
+function glyphCells(text: string): [number, number][] {
+  const out: [number, number][] = [];
   let x = 0;
   const chars = Array.from(text.toUpperCase());
   chars.forEach((ch, i) => {

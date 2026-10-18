@@ -11,12 +11,11 @@
  */
 
 import { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, View } from 'react-native';
+import { Modal, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button, Glyph } from '@/components/ui';
-import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { PermissionDecision, PermissionRequest } from '@/lib/types';
 

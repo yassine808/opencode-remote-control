@@ -25,27 +25,37 @@ export function ReasoningBlock({ text, isActive }: { text: string; isActive: boo
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
-  const [, forceTick] = useState(0);
-
-  const startedAt = useRef(Date.now());
-  const endedAt = useRef<number | null>(null);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-  const rotation = useRef(new Animated.Value(0)).current;
+  const [rotation] = useState(() => new Animated.Value(0));
 
-  // Clock in when the model starts thinking, out when it stops, once.
-  useEffect(() => {
+  // The thinking clock. `now` ticks while live, which dates the settle; a
+  // fresh start is taken by the first tick after the model thinks again.
+  // (Timestamps are state, not refs, so the React Compiler can optimise the
+  // block — Date.now() itself is not allowed during render.)
+  const [now, setNow] = useState(() => Date.now());
+  const [startedAt, setStartedAt] = useState<number | null>(() => Date.now());
+  const [endedAt, setEndedAt] = useState<number | null>(null);
+  const [wasActive, setWasActive] = useState(isActive);
+
+  if (wasActive !== isActive) {
+    setWasActive(isActive);
     if (isActive) {
-      if (endedAt.current != null) startedAt.current = Date.now();
-      endedAt.current = null;
-    } else if (endedAt.current == null) {
-      endedAt.current = Date.now();
+      // A second thought — re-clock in.
+      setStartedAt(null);
+      setEndedAt(null);
+    } else {
+      setEndedAt(now);
     }
-  }, [isActive]);
+  }
 
-  // Keep the elapsed label honest while live.
+  // Keep the clock honest while live.
   useEffect(() => {
     if (!isActive) return;
-    const t = setInterval(() => forceTick((n) => n + 1), 500);
+    const t = setInterval(() => {
+      const n = Date.now();
+      setNow(n);
+      setStartedAt((s) => s ?? n);
+    }, 500);
     return () => clearInterval(t);
   }, [isActive]);
 
@@ -63,10 +73,8 @@ export function ReasoningBlock({ text, isActive }: { text: string; isActive: boo
     }).start();
   }, [expanded, rotation]);
 
-  const seconds = Math.max(
-    0,
-    Math.round(((endedAt.current ?? Date.now()) - startedAt.current) / 1000),
-  );
+  const seconds =
+    startedAt == null || endedAt == null ? 0 : Math.max(0, Math.round((endedAt - startedAt) / 1000));
   const label = isActive
     ? 'Thinking…'
     : seconds >= 1

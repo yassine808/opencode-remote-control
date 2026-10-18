@@ -32,7 +32,7 @@ type Block =
   | { kind: 'paragraph'; lines: string[] }
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'code'; code: string }
-  | { kind: 'list'; ordered: boolean; items: Array<{ depth: number; marker: string; text: string }> }
+  | { kind: 'list'; ordered: boolean; items: { depth: number; marker: string; text: string }[] }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'table'; header: string[]; rows: string[][] };
 
@@ -84,7 +84,7 @@ function parseBlocks(text: string): Block[] {
     }
 
     if (BULLET.test(line) || ORDERED.test(line)) {
-      const items: Array<{ depth: number; marker: string; text: string }> = [];
+      const items: { depth: number; marker: string; text: string }[] = [];
       let ordered = false;
       while (i < lines.length) {
         const b = lines[i].match(BULLET);

@@ -28,7 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button, Glyph, PressableScale, useReduceMotion } from '@/components/ui';
-import { Fonts,Radius } from '@/constants/theme';
+import { Fonts, Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { HttpError, UnreachableError, exchangePairingCode } from '@/lib/api';
 import { useConnection } from '@/lib/connection';
@@ -73,7 +73,7 @@ function parsePairingInput(raw: string): ParsedPairing | null {
 function ScanFrame() {
   const reduce = useReduceMotion();
   const [h, setH] = useState(0);
-  const v = useRef(new Animated.Value(0)).current;
+  const [v] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (reduce || h === 0) return;

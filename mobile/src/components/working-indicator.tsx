@@ -10,7 +10,7 @@
  * escalates as the wait grows rather than sitting still and looking stuck.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -42,8 +42,10 @@ export function escalationLabel(activity: string, elapsedMs: number): string {
 export function WorkingIndicator({ activity, since }: { activity: string; since: number }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
-  const opacity = useRef(new Animated.Value(0.3)).current;
-  const [label, setLabel] = useState(() => escalationLabel(activity, Date.now() - since));
+  const [opacity] = useState(() => new Animated.Value(0.3));
+  // A ticking clock; the label is derived from it, so a change in activity
+  // lands on the very next render instead of waiting for a timer.
+  const [now, setNow] = useState(() => Date.now());
 
   // The heartbeat. requestAnimationFrame keeps it smooth on web; on native
   // it's a 7pt dot, so JS-thread ticks are plenty.
@@ -63,14 +65,13 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
     return () => cancelAnimationFrame(raf);
   }, [reduce, opacity]);
 
-  // Escalating copy — re-evaluated every second so the sentence keeps up.
+  // Escalating copy — the clock ticks every second so the sentence keeps up.
   useEffect(() => {
-    setLabel(escalationLabel(activity, Date.now() - since));
-    const timer = setInterval(() => {
-      setLabel(escalationLabel(activity, Date.now() - since));
-    }, 1000);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [activity, since]);
+  }, []);
+
+  const label = escalationLabel(activity, now - since);
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
