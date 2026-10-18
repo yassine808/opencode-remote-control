@@ -1,6 +1,6 @@
 const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/** Minimal base64 encoder for ASCII byte strings (used for HTTP Basic auth). */
+/** Minimal base64 codec (encoder: Basic auth headers; decoder: camera JPEG payloads). */
 export function b64encode(input: string): string {
   let out = '';
   for (let i = 0; i < input.length; i += 3) {
@@ -15,4 +15,25 @@ export function b64encode(input: string): string {
     out += has3 ? CHARS[c3 & 0x3f] : '=';
   }
   return out;
+}
+
+const LOOKUP = new Int16Array(256).fill(-1);
+for (let i = 0; i < CHARS.length; i++) LOOKUP[CHARS.charCodeAt(i)] = i;
+
+/** Decode base64 into bytes; padding, whitespace, and junk are simply skipped. */
+export function b64decode(input: string): Uint8Array {
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+  for (let i = 0; i < input.length; i++) {
+    const v = LOOKUP[input.charCodeAt(i)];
+    if (v < 0) continue;
+    buffer = (buffer << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((buffer >> bits) & 0xff);
+    }
+  }
+  return Uint8Array.from(bytes);
 }
