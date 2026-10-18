@@ -130,6 +130,51 @@ function ScanFrame() {
   );
 }
 
+/** The pairing command with a copy affordance — tap it, the glyph confirms in place. */
+function PairCommand() {
+  const theme = useTheme();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const copy = useCallback(async () => {
+    try {
+      await Clipboard.setStringAsync(PAIR_COMMAND);
+      setCopied(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // best effort — the command stays selectable for a manual long-press copy
+    }
+  }, []);
+
+  return (
+    <View style={styles.commandRow}>
+      <ThemedText type="code" selectable style={[styles.command, { color: theme.inkMuted }]}>
+        {PAIR_COMMAND}
+      </ThemedText>
+      <PressableScale
+        onPress={copy}
+        hitSlop={10}
+        scaleTo={0.85}
+        accessibilityLabel={copied ? 'Pairing command copied' : 'Copy the pairing command'}>
+        <Glyph
+          set="mci"
+          name={copied ? 'check' : 'content-copy'}
+          size={15}
+          color={copied ? theme.positive : theme.inkFaint}
+        />
+      </PressableScale>
+    </View>
+  );
+}
+
 // ---------- screen ----------
 
 export default function SetupScreen() {
@@ -303,9 +348,7 @@ export default function SetupScreen() {
                   Run this on your PC, then point the camera at the QR code it prints. Codes
                   expire after 5 minutes.
                 </ThemedText>
-                <ThemedText type="code" selectable style={[styles.command, { color: theme.inkMuted }]}>
-                  {PAIR_COMMAND}
-                </ThemedText>
+                <PairCommand />
 
                 <View style={[styles.viewport, { backgroundColor: theme.inkWell, borderColor: theme.hairline }]}>
                   {permission?.granted ? (
@@ -346,9 +389,7 @@ export default function SetupScreen() {
                 <ThemedText type="callout" style={[quiet, styles.centerText]}>
                   It is printed next to the QR code on your PC. Codes expire after 5 minutes.
                 </ThemedText>
-                <ThemedText type="code" selectable style={[styles.command, { color: theme.inkMuted }]}>
-                  {PAIR_COMMAND}
-                </ThemedText>
+                <PairCommand />
 
                 <TextInput
                   style={[
@@ -431,6 +472,7 @@ const styles = StyleSheet.create({
   },
   centerText: { textAlign: 'center' },
   command: { textAlign: 'center' },
+  commandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   viewport: {
     width: '100%',
     height: 300,
