@@ -114,8 +114,7 @@ export function ReasoningBlock({
 
   // The brain breathes while the model thinks.
   const breathe = useLoop(1500, isActive && !reduce);
-  const brainScale = breathe.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.2, 1] });
-  const brainGlow = breathe.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 1, 0.5] });
+  const brainGlow = breathe.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] });
 
   const seconds =
     startedAt == null || endedAt == null ? 0 : Math.max(0, Math.round((endedAt - startedAt) / 1000));
@@ -146,7 +145,6 @@ export function ReasoningBlock({
           <Animated.View
             style={{
               opacity: isActive && !reduce ? brainGlow : 1,
-              transform: [{ scale: isActive && !reduce ? brainScale : 1 }],
             }}>
             <Glyph set="mci" name="brain" size={13} color={isActive ? theme.clay : theme.inkMuted} />
           </Animated.View>

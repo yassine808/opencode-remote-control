@@ -10,6 +10,7 @@
 
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -23,6 +24,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as jpeg from 'jpeg-js';
+import jsQR from 'jsqr';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -31,6 +34,7 @@ import { Button, Glyph, PressableScale, useReduceMotion } from '@/components/ui'
 import { Fonts, Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { HttpError, UnreachableError, exchangePairingCode } from '@/lib/api';
+import { b64decode } from '@/lib/b64';
 import { useConnection } from '@/lib/connection';
 
 const PAIR_COMMAND = 'opencode pair --remote --yes';
@@ -157,6 +161,8 @@ export default function SetupScreen() {
   const [inputFocused, setInputFocused] = useState(false);
   const scannedRef = useRef(false);
   const navTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraRef = useRef<CameraView>(null);
+  const deepBusy = useRef(false);
 
   useEffect(
     () => () => {
@@ -251,6 +257,52 @@ export default function SetupScreen() {
     scannedRef.current = false;
   };
 
+  // The native scanner (MLKit) cannot read inverted QR codes, and the QR the PC
+  // prints comes out inverted whenever the terminal is light-themed — so while
+  // scanning we also grab stills and decode them in JS, where both polarities
+  // work. Photos are downscaled first, since a full-res JPEG is far too big to
+  // decode in JS on a phone.
+  useEffect(() => {
+    if (!NATIVE || mode !== 'scan' || phase !== 'idle' || !permission?.granted) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void (async () => {
+        if (cancelled || deepBusy.current || scannedRef.current) return;
+        deepBusy.current = true;
+        try {
+          const shot = await cameraRef.current?.takePictureAsync({
+            skipProcessing: true,
+            shutterSound: false,
+          });
+          if (!shot?.uri || cancelled || scannedRef.current) return;
+          const small = await manipulateAsync(shot.uri, [{ resize: { width: 800 } }], {
+            base64: true,
+            compress: 0.6,
+            format: SaveFormat.JPEG,
+          });
+          if (!small.base64 || cancelled || scannedRef.current) return;
+          const decoded = jpeg.decode(b64decode(small.base64), { useTArray: true });
+          if (cancelled || scannedRef.current) return;
+          const found = jsQR(
+            decoded.data as unknown as Uint8ClampedArray,
+            decoded.width,
+            decoded.height,
+            { inversionAttempts: 'attemptBoth' },
+          );
+          if (found?.data) handleScan(found.data);
+        } catch {
+          // Camera or decoder hiccup — simply try again on the next tick.
+        } finally {
+          deepBusy.current = false;
+        }
+      })();
+    }, 1800);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [mode, phase, permission?.granted, handleScan]);
+
   const quiet = { color: theme.inkMuted } as const;
 
   return (
@@ -319,6 +371,7 @@ export default function SetupScreen() {
                   {permission?.granted ? (
                     <>
                       <CameraView
+                        ref={cameraRef}
                         style={StyleSheet.absoluteFill}
                         facing="back"
                         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}

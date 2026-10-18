@@ -1,7 +1,16 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -23,6 +32,7 @@ import { ContextButton, ContextSheet, type ContextStats } from '@/components/con
 import { MessageImage } from '@/components/message-image';
 import { FadeRise, ND } from '@/components/motion';
 import { EffortSheet, ModelSheet } from '@/components/model-sheet';
+import { ModeSwitch, type Mode } from '@/components/mode-switch';
 import { PermissionCard } from '@/components/permission-card';
 import { PlanCard, type TodoItem } from '@/components/plan-card';
 import { QuestionCard } from '@/components/question-card';
@@ -98,6 +108,23 @@ function upsertPart(
     content[i] = { ...fn(content[i] as TextPart | ReasoningPart), __ordinal: ordinal } as TaggedPart;
     return { ...msg, content };
   });
+}
+
+/** Which agent an `agent-switched` message switched to — "Build" or "Plan" (or the agent's own name). */
+function switchedAgent(m: GenericMessage): string | null {
+  const pick = (v: unknown): string | null => {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      return pick(o.name) ?? pick(o.id) ?? pick(o.agent);
+    }
+    return null;
+  };
+  const raw =
+    pick(m.agent) ?? pick(m.to) ?? pick(m.name) ?? pick(m.mode) ?? pick(m.current) ?? pick(m.title) ?? pick(m.text);
+  if (!raw) return null;
+  const name = /plan/i.test(raw) ? 'plan' : /build/i.test(raw) ? 'build' : raw;
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 // ---------- rows: parts, flattened across messages ----------
@@ -270,6 +297,8 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
     }
 
     if (message.type === 'idle') continue; // no divider lines — turn end is spacing
+    // Notices the server injects for the model (e.g. "shell finished") — not part of the chat.
+    if (message.type === 'synthetic') continue;
 
     const generic = message as GenericMessage;
     const label =
@@ -279,6 +308,13 @@ function buildRows(messages: MessageInfo[], running: boolean): Row[] {
           ? String(generic.text)
           : null;
     const slug = message.type.split('-').join(' ');
+    if (message.type === 'agent-switched') {
+      const agent = switchedAgent(generic);
+      if (agent) {
+        push({ kind: 'caption', id: message.id, text: `${slug} to ${agent} mode` });
+        continue;
+      }
+    }
     push({
       kind: 'caption',
       id: message.id,
@@ -455,6 +491,27 @@ function latestTokens(messages: MessageInfo[]): ContextStats['tokens'] {
 
 const PAGE_SIZE = 60;
 
+// ---------- scroll anchoring (web has no native one for FlatList) ----------
+
+type CellReport = (key: string, y: number, h: number) => void;
+const CellLayoutContext = createContext<CellReport | null>(null);
+
+/** A list cell that reports where it sits, so the view can stay anchored to what is being read. */
+function MeasuredCell(props: any) {
+  const report = useContext(CellLayoutContext);
+  const { onLayout, cellKey, item, index, ...rest } = props;
+  return (
+    <View
+      {...rest}
+      onLayout={(e) => {
+        onLayout?.(e);
+        const l = e.nativeEvent.layout;
+        report?.(String(cellKey ?? item?.id ?? index), l.y, l.height);
+      }}
+    />
+  );
+}
+
 // ---------- small animated pieces ----------
 
 /** A row slides in once — never again when it is scrolled back into view. */
@@ -560,10 +617,15 @@ export default function SessionScreen() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
   const [effortSheetOpen, setEffortSheetOpen] = useState(false);
+  /** the reader's pick, until the server's own value catches up */
+  const [modeOverride, setModeOverride] = useState<Mode | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [showJump, setShowJump] = useState(false);
+  /** mirrors autoScrollRef so the list can switch anchoring when the reader leaves the end */
+  const [pinned, setPinned] = useState(true);
   const insets = useSafeAreaInsets();
 
   const listRef = useRef<FlatList<Row>>(null);
@@ -572,6 +634,15 @@ export default function SessionScreen() {
   const draggingRef = useRef(false);
   /** every row is rendered on first open, so the true end is measurable */
   const initialCountRef = useRef(0);
+  const dragEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFollowRef = useRef(0);
+  const followTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openingRef = useRef(true);
+  const layoutsRef = useRef(new Map<string, { y: number; h: number }>());
+  const anchorRef = useRef<{ key: string; delta: number } | null>(null);
+  const offsetRef = useRef(0);
+  const ignoreScrollUntil = useRef(0);
+  const restoreRaf = useRef<number | null>(null);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordedRef = useRef<string | null>(null);
   /** Messages present at first load — only newer ones animate in. */
@@ -793,15 +864,23 @@ export default function SessionScreen() {
     autoScrollRef.current = true;
     draggingRef.current = false;
     setShowJump(false);
+    openingRef.current = true;
     const toEnd = () => {
-      if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
+      if (openingRef.current && autoScrollRef.current) {
+        listRef.current?.scrollToEnd({ animated: false });
+      }
     };
     const raf = requestAnimationFrame(toEnd);
-    // late layout (fonts, code blocks, images) keeps moving the end — chase it
-    const timers = [100, 300, 700, 1400].map((ms) => setTimeout(toEnd, ms));
+    // late layout (fonts, code blocks, images) keeps moving the end — chase it,
+    // but only until the opening settles or the reader touches the list
+    const timers = [100, 300, 700].map((ms) => setTimeout(toEnd, ms));
+    const done = setTimeout(() => {
+      openingRef.current = false;
+    }, 900);
     return () => {
       cancelAnimationFrame(raf);
       timers.forEach(clearTimeout);
+      clearTimeout(done);
     };
   }, [loaded]);
 
@@ -836,6 +915,13 @@ export default function SessionScreen() {
     setSending(true);
     try {
       await api.prompt(sessionID, { text });
+      // Sending a prompt is the only thing that pulls the view to the newest turn.
+      autoScrollRef.current = true;
+      draggingRef.current = false;
+      openingRef.current = false;
+      setPinned(true);
+      setShowJump(false);
+      listRef.current?.scrollToEnd({ animated: true });
       setDraft('');
       setTurnStartedAt(Date.now());
       setRunning(true);
@@ -945,6 +1031,32 @@ export default function SessionScreen() {
 
   const currentModel = sessionInfo?.model ?? null;
 
+  const serverMode: Mode = /plan/i.test(sessionInfo?.agent ?? '') ? 'plan' : 'build';
+  const mode: Mode = modeOverride ?? serverMode;
+  // the server's value is the truth again once it changes (e.g. switched from the CLI)
+  useEffect(() => {
+    setModeOverride(null);
+  }, [sessionInfo?.agent]);
+
+  const switchMode = useCallback(
+    async (next: Mode) => {
+      if (!api || !sessionID) return;
+      const prev = modeOverride;
+      setModeOverride(next);
+      setModeBusy(true);
+      try {
+        await api.switchAgent(sessionID, next);
+        setSessionInfo((s) => (s ? { ...s, agent: next } : s));
+      } catch (err) {
+        setModeOverride(prev);
+        setExecError(describeError(err));
+      } finally {
+        setModeBusy(false);
+      }
+    },
+    [api, sessionID, modeOverride],
+  );
+
   const modelLabel = useMemo(() => {
     if (!currentModel) return null;
     const info = models?.find(
@@ -994,11 +1106,78 @@ export default function SessionScreen() {
     };
   }, [messages, models, currentModel, sessionInfo, running]);
 
+  /** Remember which row sits at the top of the screen, and how far into it we are. */
+  const recomputeAnchor = useCallback(() => {
+    const off = offsetRef.current;
+    for (const [key, l] of layoutsRef.current) {
+      if (l.y <= off && off < l.y + l.h) {
+        anchorRef.current = { key, delta: off - l.y };
+        return;
+      }
+    }
+    anchorRef.current = null;
+  }, []);
+
+  /**
+   * A row changed size or place. If the reader is away from the end, put the
+   * anchor row back where it was on screen — so text that reflows above (or
+   * rows that grow above) never moves what they are reading.
+   */
+  const reportCell = useCallback<CellReport>((key, y, h) => {
+    const prev = layoutsRef.current.get(key);
+    layoutsRef.current.set(key, { y, h });
+    if (Platform.OS !== 'web') return; // iOS/Android anchor natively
+    if (prev && prev.y === y && prev.h === h) return;
+    if (autoScrollRef.current || draggingRef.current || openingRef.current) return;
+    if (restoreRaf.current != null) return;
+    restoreRaf.current = requestAnimationFrame(() => {
+      restoreRaf.current = null;
+      const a = anchorRef.current;
+      const l = a ? layoutsRef.current.get(a.key) : undefined;
+      if (!a || !l) return;
+      const desired = l.y + a.delta;
+      if (Math.abs(desired - offsetRef.current) > 1) {
+        ignoreScrollUntil.current = Date.now() + 80;
+        offsetRef.current = desired;
+        listRef.current?.scrollToOffset({ offset: desired, animated: false });
+      }
+    });
+  }, []);
+
+  /** New text while pinned to the end: glide there, at most a few times a second. */
+  const followEnd = useCallback(() => {
+    if (!autoScrollRef.current || draggingRef.current) return;
+    if (openingRef.current) {
+      listRef.current?.scrollToEnd({ animated: false });
+      return;
+    }
+    const wait = 220 - (Date.now() - lastFollowRef.current);
+    if (followTimer.current) return;
+    followTimer.current = setTimeout(
+      () => {
+        followTimer.current = null;
+        if (!autoScrollRef.current || draggingRef.current) return;
+        lastFollowRef.current = Date.now();
+        listRef.current?.scrollToEnd({ animated: true });
+      },
+      Math.max(0, wait),
+    );
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (followTimer.current) clearTimeout(followTimer.current);
+      if (dragEndTimer.current) clearTimeout(dragEndTimer.current);
+    },
+    [],
+  );
+
   const jumpToLatest = useCallback(() => {
     autoScrollRef.current = true;
     draggingRef.current = false;
+    openingRef.current = false;
+    setPinned(true);
     listRef.current?.scrollToEnd({ animated: true });
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 350);
     setShowJump(false);
   }, []);
 
@@ -1082,6 +1261,10 @@ export default function SessionScreen() {
             onPress={() => setContextOpen(true)}
           />
         </View>
+        {/* Build / Plan */}
+        <View style={{ alignItems: 'center', paddingBottom: 8 }}>
+          <ModeSwitch mode={mode} onChange={(m) => void switchMode(m)} disabled={modeBusy} />
+        </View>
       </View>
 
       {/* conversation */}
@@ -1099,6 +1282,7 @@ export default function SessionScreen() {
               </View>
             </View>
           ) : (
+            <CellLayoutContext.Provider value={reportCell}>
             <FlatList
               ref={listRef}
               data={rows}
@@ -1112,13 +1296,34 @@ export default function SessionScreen() {
                 width: '100%',
                 alignSelf: 'center',
               }}
+              // Away from the end, whatever the reader is looking at stays put
+              // while new text lands below (or content above changes height).
+              maintainVisibleContentPosition={
+                Platform.OS !== 'web' && !pinned ? { minIndexForVisible: 0 } : undefined
+              }
+              CellRendererComponent={MeasuredCell}
               initialNumToRender={Math.max(20, initialCountRef.current)}
               windowSize={21}
               onScrollBeginDrag={() => {
+                // The reader's finger wins over everything automatic.
+                if (dragEndTimer.current) clearTimeout(dragEndTimer.current);
+                if (followTimer.current) {
+                  clearTimeout(followTimer.current);
+                  followTimer.current = null;
+                }
+                openingRef.current = false;
                 draggingRef.current = true;
               }}
               onScrollEndDrag={() => {
-                // a fling keeps going after the finger lifts; momentum end clears it
+                // A fling continues after the finger lifts (momentum begin cancels this).
+                if (dragEndTimer.current) clearTimeout(dragEndTimer.current);
+                dragEndTimer.current = setTimeout(() => {
+                  draggingRef.current = false;
+                }, 120);
+              }}
+              onMomentumScrollBegin={() => {
+                if (dragEndTimer.current) clearTimeout(dragEndTimer.current);
+                draggingRef.current = true;
               }}
               onMomentumScrollEnd={() => {
                 draggingRef.current = false;
@@ -1126,19 +1331,41 @@ export default function SessionScreen() {
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
                 const distance = contentSize.height - layoutMeasurement.height - contentOffset.y;
-                // Only the reader may un-pin the view; programmatic jumps and
-                // layout growth never do (that was what left it mid-chat).
-                if (draggingRef.current) autoScrollRef.current = distance < 140;
+                const prevOffset = offsetRef.current;
+                offsetRef.current = contentOffset.y;
+                const programmatic = Date.now() <= ignoreScrollUntil.current;
+                if (!programmatic) recomputeAnchor();
+                // Only the reader may un-pin (or re-pin) the view; our own glides
+                // and layout growth never do.
+                if (draggingRef.current) {
+                  autoScrollRef.current = distance < 80;
+                } else if (Platform.OS === 'web' && !programmatic) {
+                  // Mouse wheel / trackpad / scrollbar fire no drag events, so on
+                  // web, any move upward means the reader left the end. Our own
+                  // glides only ever move down.
+                  if (contentOffset.y < prevOffset - 2) {
+                    openingRef.current = false;
+                    if (followTimer.current) {
+                      clearTimeout(followTimer.current);
+                      followTimer.current = null;
+                    }
+                    autoScrollRef.current = false;
+                  } else if (distance < 80) {
+                    autoScrollRef.current = true;
+                  }
+                }
                 const away = autoScrollRef.current ? false : distance > 320;
                 setShowJump((prev) => (prev === away ? prev : away));
+                const nowPinned = autoScrollRef.current;
+                setPinned((prev) => (prev === nowPinned ? prev : nowPinned));
               }}
               scrollEventThrottle={50}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => {
-                // History lands pinned to the bottom without animating there;
-                // the reader opens on the newest turn.
-                if (autoScrollRef.current) listRef.current?.scrollToEnd({ animated: false });
+                // Opening lands on the newest turn instantly; after that, new text
+                // only glides the view along while the reader is at the end.
+                followEnd();
               }}
               ListEmptyComponent={
                 <View style={{ flex: 1 }} />
@@ -1227,6 +1454,7 @@ export default function SessionScreen() {
                 </View>
               }
             />
+            </CellLayoutContext.Provider>
           )}
           <JumpButton visible={showJump && loaded} onPress={jumpToLatest} />
         </View>

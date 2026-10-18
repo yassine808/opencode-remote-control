@@ -431,7 +431,6 @@ function renderBlock(block: Block, theme: Palette, keyPrefix: string): ReactNode
     case 'heading':
       return (
         <Text style={[headingStyle(block.level), { color: cliColors(theme).heading }]}>
-          {`${'#'.repeat(block.level)} `}
           {renderInline(block.text, theme, `${keyPrefix}-h`)}
         </Text>
       );

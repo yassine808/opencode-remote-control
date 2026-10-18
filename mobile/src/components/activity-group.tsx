@@ -38,11 +38,10 @@ function summarize(items: GroupItem[]): { kind: Kind; count: number }[] {
 function KindIcon({ kind, live, color }: { kind: Kind; live: boolean; color: string }) {
   const reduce = useReduceMotion();
   const loop = useLoop(1200, live && !reduce);
-  const scale = loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.25, 1] });
-  const opacity = loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.6, 1, 0.6] });
+  const opacity = loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] });
   return (
     <PopIn from={0.2}>
-      <Animated.View style={live && !reduce ? { opacity, transform: [{ scale }] } : undefined}>
+      <Animated.View style={live && !reduce ? { opacity } : undefined}>
         <Glyph set={kind.set} name={kind.icon} size={14} color={color} />
       </Animated.View>
     </PopIn>

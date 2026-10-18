@@ -1,10 +1,9 @@
 /**
  * "The agent is working" — and what on.
  *
- * A card with an icon badge that matches the activity (brain for thinking,
+ * An icon that matches the activity (brain for thinking,
  * terminal for a shell, pencil for writing, page for reading, magnifier for
- * searching…). The badge has a soft halo that breathes and the icon has its
- * own small motion. Next to it: the activity as a travelling wave of light,
+ * searching…) with its own small motion — no circle, no box. Next to it: the activity as a travelling wave of light,
  * the stopwatch, and a hairline with a light running along it. The wording
  * escalates as the wait grows, so a long wait never looks stuck.
  */
@@ -12,9 +11,10 @@
 import { useEffect, useState } from 'react';
 import { Animated, View } from 'react-native';
 
-import { FadeRise, Sweep, WaveText, useLoop, withAlpha } from '@/components/motion';
+import { WaveText, useLoop } from '@/components/motion';
 import { ThemedText } from '@/components/themed-text';
 import { Glyph, useReduceMotion } from '@/components/ui';
+import { Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fmtElapsed } from '@/lib/format';
 
@@ -44,38 +44,33 @@ function lookFor(activity: string): Look {
   return { set: 'ionicons', icon: 'sparkles', motion: 'breathe' };
 }
 
-function ActivityBadge({ activity }: { activity: string }) {
+/** Just the icon — no circle, no halo — with a motion that says what it is doing. */
+function ActivityIcon({ activity }: { activity: string }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const look = lookFor(activity);
-  const loop = useLoop(look.motion === 'spin' ? 2400 : 1400, !reduce);
-  const halo = useLoop(1800, !reduce);
-
-  const haloScale = halo.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] });
-  const haloOpacity = halo.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.35, 0] });
+  const loop = useLoop(look.motion === 'spin' ? 2400 : 1300, !reduce);
 
   const motion: Record<Motion, object> = {
     breathe: {
-      transform: [
-        { scale: loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.18, 1] }) },
-      ],
+      opacity: loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.45, 1, 0.45] }),
     },
     blink: {
-      opacity: loop.interpolate({ inputRange: [0, 0.5, 0.51, 1], outputRange: [1, 1, 0.35, 0.35] }),
+      opacity: loop.interpolate({ inputRange: [0, 0.45, 0.5, 0.95, 1], outputRange: [1, 1, 0.25, 0.25, 1] }),
     },
     wiggle: {
       transform: [
         {
           rotate: loop.interpolate({
             inputRange: [0, 0.25, 0.5, 0.75, 1],
-            outputRange: ['0deg', '-14deg', '0deg', '14deg', '0deg'],
+            outputRange: ['0deg', '-16deg', '0deg', '16deg', '0deg'],
           }),
         },
       ],
     },
     bob: {
       transform: [
-        { translateY: loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1.5, -1.5, 1.5] }) },
+        { translateY: loop.interpolate({ inputRange: [0, 0.5, 1], outputRange: [2.5, -2.5, 2.5] }) },
       ],
     },
     spin: {
@@ -86,35 +81,10 @@ function ActivityBadge({ activity }: { activity: string }) {
   };
 
   return (
-    <View style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
-      {!reduce ? (
-        <Animated.View
-          style={{
-            position: 'absolute',
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: theme.clay,
-            opacity: haloOpacity,
-            transform: [{ scale: haloScale }],
-          }}
-        />
-      ) : null}
-      <View
-        style={{
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: withAlpha(theme.clay, 0.16),
-          borderWidth: 1,
-          borderColor: withAlpha(theme.clay, 0.35),
-        }}>
-        <Animated.View style={reduce ? undefined : motion[look.motion]}>
-          <Glyph set={look.set} name={look.icon} size={17} color={theme.clay} />
-        </Animated.View>
-      </View>
+    <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={reduce ? undefined : motion[look.motion]}>
+        <Glyph set={look.set} name={look.icon} size={21} color={theme.clay} />
+      </Animated.View>
     </View>
   );
 }
@@ -146,35 +116,21 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
   }, []);
 
   const elapsed = now - since;
-  const note = escalationNote(elapsed);
 
   return (
     <View
       accessible
       accessibilityLabel={escalationLabel(activity || 'Working', elapsed)}
       accessibilityLiveRegion="polite"
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
-        paddingVertical: 10,
-        paddingLeft: 10,
-        paddingRight: 16,
-        borderRadius: 18,
-        backgroundColor: theme.surface,
-        borderWidth: 1,
-        borderColor: theme.hairline,
-      }}>
-      <ActivityBadge activity={activity || 'Working'} />
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, alignSelf: 'flex-start' }}>
+      <ActivityIcon activity={activity || 'Working'} />
 
-      <View style={{ gap: 5, flexShrink: 1 }}>
+      <View>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
           <WaveText
             text={activity || 'Working'}
             type="callout"
-            style={{ color: theme.ink }}
+            style={{ color: theme.ink, fontFamily: Fonts.semibold }}
           />
           <ThemedText
             type="caption"
@@ -182,25 +138,6 @@ export function WorkingIndicator({ activity, since }: { activity: string; since:
             {fmtElapsed(elapsed)}
           </ThemedText>
         </View>
-
-        <View
-          style={{
-            width: 132,
-            height: 2,
-            borderRadius: 1,
-            overflow: 'hidden',
-            backgroundColor: theme.inkWell,
-          }}>
-          <Sweep color={withAlpha(theme.clay, 0.9)} duration={1700} bandWidth={0.45} />
-        </View>
-
-        {note ? (
-          <FadeRise key={note} distance={4} duration={260}>
-            <ThemedText type="caption" style={{ color: theme.inkMuted }}>
-              {note}
-            </ThemedText>
-          </FadeRise>
-        ) : null}
       </View>
     </View>
   );
