@@ -53,6 +53,9 @@ export function describeError(err: unknown): string {
 
 // ---------- auth helpers ----------
 
+/** Pairing must feel quick: a hung tunnel should fail loudly, not spin forever. */
+const PAIRING_TIMEOUT_MS = 20_000;
+
 export function basicAuthHeader(token: string): string {
   const credentials = `opencode:${token}`;
   return `Basic ${b64encode(credentials)}`;
@@ -228,23 +231,36 @@ export class OpenCodeApi {
 /** Exchange a one-time pairing code for a long-lived token. No auth required. */
 export async function exchangePairingCode(baseUrl: string, code: string): Promise<string> {
   const url = `${normalizeBaseUrl(baseUrl)}/auth/connect/${encodeURIComponent(code)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAIRING_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(url, { headers: { Accept: 'application/json' } });
+    res = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
   } catch (err) {
+    if (controller.signal.aborted) {
+      throw new HttpError(0, `Timed out after ${PAIRING_TIMEOUT_MS / 1000}s — the PC tunnel did not answer`);
+    }
     throw new UnreachableError(baseUrl, err);
+  } finally {
+    clearTimeout(timer);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    let body: unknown;
+    let body: unknown = text;
     try {
       body = text ? JSON.parse(text) : undefined;
     } catch {
-      body = text;
+      // HTML error page — keep the text, trimmed so the UI stays readable.
+      body = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || undefined;
     }
     throw new HttpError(res.status, body);
   }
-  const json = (await res.json()) as { token?: string };
+  let json: { token?: string };
+  try {
+    json = (await res.json()) as { token?: string };
+  } catch {
+    throw new HttpError(res.status, 'Server answered with a non-JSON body (is the tunnel serving a web page?)');
+  }
   if (!json?.token) throw new HttpError(0, 'Pairing response missing token');
   return json.token;
 }

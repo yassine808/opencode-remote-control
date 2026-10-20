@@ -33,15 +33,20 @@ import { ThemedView } from '@/components/themed-view';
 import { Button, Glyph, PressableScale, useReduceMotion } from '@/components/ui';
 import { Fonts, Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { HttpError, UnreachableError, exchangePairingCode } from '@/lib/api';
+import { HttpError, exchangePairingCode } from '@/lib/api';
 import { b64decode } from '@/lib/b64';
 import { useConnection } from '@/lib/connection';
 
 const PAIR_COMMAND = 'opencode pair --remote --yes';
 const NATIVE = Platform.OS !== 'web';
-/** `https://host/…/auth/connect/<code>` — the shape the PC prints next to the QR. */
-const PAIRING_LINK_RE =
-  /^(https?:\/\/[^/\s]+)(?:(?:\/|[^\S\n\r\u2028\u2029])[^\n\r\u2028\u2029]*)?\/auth\/connect\/([^/?#\s]+)/;
+
+/**
+ * Matches every `https?://host/…/auth/connect/<code>` in a block of text.
+ * The pairing command prints a localhost link *and* the tunnel link on
+ * separate lines, so the parser must consider all of them — taking the first
+ * would hand the phone `http://127.0.0.1:…`, which it can never reach.
+ */
+const PAIRING_LINK_RE = /(https?:\/\/[^\s/?#]+)[^\s]*?\/auth\/connect\/([A-Za-z0-9_-]+)/g;
 
 type Phase = 'idle' | 'connecting' | 'paired' | 'failed';
 
@@ -50,21 +55,68 @@ interface ParsedPairing {
   urls: string[];
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.startsWith('127.') ||
+    host === '[::1]' ||
+    host === '0.0.0.0'
+  );
+}
+
+/** Keep only usable http(s) origins; everything else is dropped. */
+function cleanUrls(urls: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  for (const raw of urls) {
+    if (typeof raw !== 'string') continue;
+    try {
+      const url = new URL(raw.trim());
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+      seen.add(url.origin);
+    } catch {
+      // Not a URL — skip it.
+    }
+  }
+  return [...seen];
+}
+
+/** All pairing links embedded in arbitrary text (QR, terminal block, chat message). */
+function linksInText(text: string): { code: string; urls: string[] } | null {
+  const urls: string[] = [];
+  let code = '';
+  for (const match of text.matchAll(PAIRING_LINK_RE)) {
+    if (!code) code = match[2];
+    urls.push(match[1]);
+  }
+  if (!code) return null;
+  return { code, urls: cleanUrls(urls) };
+}
+
 /**
  * Accepts the JSON payload from the pairing QR, a full
- * `https://host/auth/connect/<code>` link, or similar variants.
+ * `https://host/auth/connect/<code>` link, or the whole terminal block the
+ * command prints (local link + tunnel link + QR art).
  */
 function parsePairingInput(raw: string): ParsedPairing | null {
   const text = raw.trim();
   if (!text) return null;
 
-  if (text.startsWith('{')) {
+  const fromText = linksInText(text);
+
+  if (text.startsWith('{') || text.includes('"urls"')) {
     try {
-      const obj = JSON.parse(text) as { code?: string; urls?: string[]; url?: string };
-      if (obj.code) {
-        let urls: string[] = [];
-        if (obj.urls && obj.urls.length > 0) urls = obj.urls;
-        else if (obj.url) urls = [obj.url];
+      const start = text.indexOf('{');
+      const obj = JSON.parse(text.slice(start)) as { code?: string; urls?: string[]; url?: string };
+      if (typeof obj.code === 'string' && obj.code) {
+        const urls = cleanUrls(
+          Array.isArray(obj.urls) && obj.urls.length > 0
+            ? obj.urls
+            : obj.url
+              ? [obj.url]
+              : (fromText?.urls ?? []),
+        );
         return { code: obj.code, urls };
       }
     } catch {
@@ -72,17 +124,37 @@ function parsePairingInput(raw: string): ParsedPairing | null {
     }
   }
 
-  const match = PAIRING_LINK_RE.exec(text);
-  if (match) return { code: match[2], urls: [match[1]] };
-
-  return null;
+  if (!fromText) return null;
+  return { code: fromText.code, urls: fromText.urls };
 }
 
-/** Prefer the server's own rejection message — e.g. "Pairing link expired or already used". */
-function pairingFailureReason(err: HttpError): string {
-  const message = (err.body as { message?: unknown } | undefined)?.message;
-  if (err.status === 401 && typeof message === 'string' && message) return message;
-  return `HTTP ${err.status === 0 ? 'error' : err.status}`;
+/**
+ * Pairing candidates in the order worth trying: public HTTPS first (works on
+ * mobile data), then other public URLs, and loopback last — and only when the
+ * input offers nothing else, since a phone cannot reach the PC's 127.0.0.1.
+ */
+function pairingCandidates(urls: readonly string[]): string[] {
+  const parsed = cleanUrls(urls)
+    .map((url) => new URL(url))
+    .sort((a, b) => {
+      const score = (u: URL) => (isLoopbackHost(u.hostname) ? 0 : 2) + (u.protocol === 'https:' ? 1 : 0);
+      return score(b) - score(a);
+    });
+  const reachable = parsed.filter((u) => !isLoopbackHost(u.hostname));
+  const list = reachable.length > 0 ? reachable : parsed;
+  return list.map((u) => u.origin);
+}
+
+/** A failure the user can act on — server text when present, never a bare "failed". */
+function pairingFailureReason(err: unknown): string {
+  if (err instanceof HttpError) {
+    const body = err.body as { message?: unknown } | string | undefined;
+    const message = typeof body === 'string' ? body : body?.message;
+    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 140);
+    return `HTTP ${err.status === 0 ? 'error' : err.status}`;
+  }
+  if (err instanceof Error && err.message) return err.message.slice(0, 140);
+  return 'unknown error';
 }
 
 /** Corner brackets + a sweeping line over the camera feed. */
@@ -291,9 +363,7 @@ export default function SetupScreen() {
 
   const pair = useCallback(
     async (parsed: ParsedPairing) => {
-      const candidates = [...parsed.urls].sort(
-        (a, b) => Number(b.startsWith('https://')) - Number(a.startsWith('https://')),
-      );
+      const candidates = pairingCandidates(parsed.urls);
       if (candidates.length === 0) {
         setPhase('failed');
         setError('No server URL in that code. On the PC run `opencode pair --remote --yes` and scan its QR.');
@@ -303,29 +373,36 @@ export default function SetupScreen() {
       setError(null);
       const failures: string[] = [];
       for (const baseUrl of candidates) {
+        let token: string;
         try {
-          const token = await exchangePairingCode(baseUrl, parsed.code);
-          await connect(baseUrl, token);
-          setPhase('paired');
-          navTimer.current = setTimeout(() => {
-            if (router.canGoBack()) router.back();
-            else router.replace('/');
-          }, 900);
-          return;
+          token = await exchangePairingCode(baseUrl, parsed.code);
         } catch (err) {
-          let reason: string;
-          if (err instanceof UnreachableError) {
-            reason = 'unreachable';
-          } else if (err instanceof HttpError) {
-            reason = pairingFailureReason(err);
-          } else {
-            reason = 'failed';
-          }
-          failures.push(`${baseUrl.replace(/^https?:\/\//, '')} (${reason})`);
+          failures.push(`${baseUrl.replace(/^https?:\/\//, '')} (${pairingFailureReason(err)})`);
+          continue;
         }
+        // The code is now spent. Never fall through to another URL after this
+        // point — a second exchange cannot succeed and would only hide the
+        // real problem.
+        try {
+          await connect(baseUrl, token);
+        } catch {
+          setPhase('failed');
+          setError(
+            `Paired with ${baseUrl.replace(/^https?:\/\//, '')}, but the token could not be saved on this device.`,
+          );
+          return;
+        }
+        setPhase('paired');
+        navTimer.current = setTimeout(() => {
+          if (router.canGoBack()) router.back();
+          else router.replace('/');
+        }, 900);
+        return;
       }
       setPhase('failed');
-      setError(`Pairing failed: ${failures.join(' · ')}. Codes expire after 5 minutes — mint a fresh one.`);
+      setError(
+        `Pairing failed: ${failures.join(' · ')}.\n\nEvery code works once and expires in 5 minutes — run \`${PAIR_COMMAND}\` again. Don't open the link on the PC first; that spends the code.`,
+      );
       // Allow another scan, after a pause so the same stale QR isn't retried in a tight loop.
       setTimeout(() => {
         scannedRef.current = false;
