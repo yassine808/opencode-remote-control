@@ -30,8 +30,11 @@ jobs:
 
       - name: Install dependencies
         # No install script is needed for this build: the only dep with one
-        # (unrs-resolver) is lint-time tooling, and CI never lints.
+        # (unrs-resolver) is lint-time tooling, and this workflow never lints.
         run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Generate Android project
         run: npx expo prebuild --platform android --no-install
