@@ -44,7 +44,6 @@ function applySgr(code: number, style: { color?: string; bold: boolean }): void 
 export function parseAnsi(input: string): Seg[] {
   const out: Seg[] = [];
   const style: { color?: string; bold: boolean } = { bold: false };
-  // eslint-disable-next-line no-control-regex
   const re = /\x1b\[([0-9;?]*)([A-Za-z])/g;
   let last = 0;
   for (let m = re.exec(input); m; m = re.exec(input)) {

@@ -97,13 +97,6 @@ export function escalationLabel(activity: string, elapsedMs: number): string {
   return `${what} — still working, Stop is available`;
 }
 
-function escalationNote(elapsedMs: number): string | null {
-  if (elapsedMs < 10_000) return null;
-  if (elapsedMs < 20_000) return 'Still going';
-  if (elapsedMs < 45_000) return "This one's taking a while";
-  return 'Still working — Stop is available';
-}
-
 export function WorkingIndicator({ activity, since }: Readonly<{ activity: string; since: number }>) {
   const theme = useTheme();
   // A ticking clock; the label is derived from it, so a change in activity
