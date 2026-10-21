@@ -128,54 +128,75 @@ function CodePreview({ code }: Readonly<{ code: string }>) {
   );
 }
 
-export function ToolBlock({ part }: Readonly<{ part: ToolPart }>) {
+function ToolHeader({
+  part,
+  kind,
+  running,
+  errored,
+  sawRunning,
+  togglable,
+  open,
+  onToggle,
+}: Readonly<{
+  part: ToolPart;
+  kind: Kind;
+  running: boolean;
+  errored: boolean;
+  sawRunning: boolean;
+  togglable: boolean;
+  open: boolean;
+  onToggle: () => void;
+}>) {
   const theme = useTheme();
-
-  const kind = kindOfTool(part.name);
-  const isShell = part.name === 'bash' || part.name === 'shell';
-  const [shellOpen, setShellOpen] = useState(false);
-  const status = part.state.status;
-  const running = status === 'running' || status === 'pending';
-  const errored = status === 'error' || !!part.state.error;
-
-  // A call watched while it ran gets a little "pop" when it lands; history
-  // that was already finished on arrival stays still.
-  const [sawRunning, setSawRunning] = useState(running);
-  if (running && !sawRunning) setSawRunning(true);
-
-  const preview = previewFor(part);
-  const errorMessage = errored ? part.state.error?.message : undefined;
-  const images = imageBlocks(part);
-  const shellToggle = shellOpen ? 'Hide' : 'Show';
+  const toggle = open ? 'Hide' : 'Show';
 
   return (
-    <View style={{ gap: 6 }}>
-      <PressableScale
-        onPress={isShell ? () => setShellOpen((o) => !o) : undefined}
-        disabled={!isShell}
-        scaleTo={0.98}
-        hitSlop={6}
-        accessibilityLabel={isShell ? `${shellToggle} terminal` : undefined}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          overflow: 'hidden',
-          borderRadius: 6,
-          alignSelf: 'flex-start',
-          maxWidth: '100%',
-        }}>
-        {running ? <Sweep color={withAlpha(theme.clay, 0.18)} duration={1900} /> : null}
-        <StatusIcon running={running} errored={errored} sawRunning={sawRunning} kind={kind} />
-        <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
-          {titleFor(part)}
-        </ThemedText>
-        {isShell ? (
-          <Glyph name={shellOpen ? 'chevron-up' : 'chevron-down'} size={11} color={theme.inkFaint} />
-        ) : null}
-      </PressableScale>
+    <PressableScale
+      onPress={togglable ? onToggle : undefined}
+      disabled={!togglable}
+      scaleTo={0.98}
+      hitSlop={6}
+      accessibilityLabel={togglable ? `${toggle} terminal` : undefined}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        overflow: 'hidden',
+        borderRadius: 6,
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+      }}>
+      {running ? <Sweep color={withAlpha(theme.clay, 0.18)} duration={1900} /> : null}
+      <StatusIcon running={running} errored={errored} sawRunning={sawRunning} kind={kind} />
+      <ThemedText type="callout" style={{ color: theme.inkMuted, flexShrink: 1 }}>
+        {titleFor(part)}
+      </ThemedText>
+      {togglable ? (
+        <Glyph name={open ? 'chevron-up' : 'chevron-down'} size={11} color={theme.inkFaint} />
+      ) : null}
+    </PressableScale>
+  );
+}
 
-      {isShell && shellOpen ? <Terminal part={part} /> : null}
+/** Everything under the header row: what ran, what came back. */
+function ToolDetails({
+  part,
+  preview,
+  images,
+  errorMessage,
+  showTerminal,
+}: Readonly<{
+  part: ToolPart;
+  preview: string | null;
+  images: ToolContentBlock[];
+  errorMessage: string | undefined;
+  showTerminal: boolean;
+}>) {
+  const theme = useTheme();
+
+  return (
+    <>
+      {showTerminal ? <Terminal part={part} /> : null}
 
       {images.map((block, i) => (
         <MessageImage
@@ -194,6 +215,45 @@ export function ToolBlock({ part }: Readonly<{ part: ToolPart }>) {
       ) : null}
 
       {preview ? <CodePreview code={preview} /> : null}
+    </>
+  );
+}
+
+export function ToolBlock({ part }: Readonly<{ part: ToolPart }>) {
+  const kind = kindOfTool(part.name);
+  const isShell = part.name === 'bash' || part.name === 'shell';
+  const [shellOpen, setShellOpen] = useState(false);
+  const status = part.state.status;
+  const running = status === 'running' || status === 'pending';
+  const errored = status === 'error' || !!part.state.error;
+
+  // A call watched while it ran gets a little "pop" when it lands; history
+  // that was already finished on arrival stays still.
+  const [sawRunning, setSawRunning] = useState(running);
+  if (running && !sawRunning) setSawRunning(true);
+
+  const preview = previewFor(part);
+  const errorMessage = errored ? part.state.error?.message : undefined;
+
+  return (
+    <View style={{ gap: 6 }}>
+      <ToolHeader
+        part={part}
+        kind={kind}
+        running={running}
+        errored={errored}
+        sawRunning={sawRunning}
+        togglable={isShell}
+        open={shellOpen}
+        onToggle={() => setShellOpen((o) => !o)}
+      />
+      <ToolDetails
+        part={part}
+        preview={preview}
+        images={imageBlocks(part)}
+        errorMessage={errorMessage}
+        showTerminal={isShell && shellOpen}
+      />
     </View>
   );
 }

@@ -78,12 +78,9 @@ export function PreferencesProvider({ children }: Readonly<{ children: ReactNode
     }
   }, []);
 
+  const systemScheme: ColorScheme = system === 'dark' ? 'dark' : 'light';
   const scheme: ColorScheme =
-    preferences.appearance === 'system'
-      ? system === 'dark'
-        ? 'dark'
-        : 'light'
-      : preferences.appearance;
+    preferences.appearance === 'system' ? systemScheme : preferences.appearance;
 
   const value = useMemo<PreferencesContextValue>(
     () => ({ ready, preferences, scheme, update }),

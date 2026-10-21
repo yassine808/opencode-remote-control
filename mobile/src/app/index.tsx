@@ -133,7 +133,143 @@ type Row =
       state?: SessionState;
     };
 
+/** Live state for one session; a waiting approval outranks a running agent. */
+function sessionStateOf(
+  id: string,
+  attentionIDs: ReadonlySet<string>,
+  workingIDs: ReadonlySet<string>,
+): SessionState | undefined {
+  if (attentionIDs.has(id)) return 'attention';
+  if (workingIDs.has(id)) return 'working';
+  return undefined;
+}
+
+/**
+ * The flat row list the launcher renders: pinned first, recents next, then
+ * every project with its conversations nested underneath when it is open.
+ * A search hides history rows and forces every matching group open.
+ */
+function buildRows({
+  searching,
+  pinned,
+  pinnedIDs,
+  recents,
+  sessionByID,
+  groups,
+  isExpanded,
+  attentionIDs,
+  workingIDs,
+}: Readonly<{
+  searching: boolean;
+  pinned: PinnedSession[];
+  pinnedIDs: ReadonlySet<string>;
+  recents: RecentSession[];
+  sessionByID: ReadonlyMap<string, SessionInfo>;
+  groups: ProjectGroup[];
+  isExpanded: (group: ProjectGroup) => boolean;
+  attentionIDs: ReadonlySet<string>;
+  workingIDs: ReadonlySet<string>;
+}>): Row[] {
+  const out: Row[] = [];
+  const stateOf = (id: string) => sessionStateOf(id, attentionIDs, workingIDs);
+
+  // Pinned conversations lead — a deliberate choice outranks recency; a
+  // search narrows the list to matches only.
+  if (!searching && pinned.length > 0) {
+    out.push({ kind: 'section', key: 'sec:pinned', title: 'Pinned' });
+    pinned.forEach((entry, i) => {
+      const fresh = sessionByID.get(entry.id);
+      const directory = fresh?.location?.directory ?? entry.directory ?? '';
+      out.push({
+        kind: 'session',
+        key: `pinned:${entry.id}`,
+        id: entry.id,
+        title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
+        hint: basename(directory) || undefined,
+        state: stateOf(entry.id),
+        last: i === pinned.length - 1,
+      });
+    });
+  }
+
+  // Recents sit above the fold — continuing the last conversation stays
+  // the fastest path. Anything already pinned above would read as a double.
+  const unpinnedRecents = recents.filter((entry) => !pinnedIDs.has(entry.id));
+  if (!searching && unpinnedRecents.length > 0) {
+    out.push({ kind: 'section', key: 'sec:recent', title: 'Recent' });
+    unpinnedRecents.forEach((entry, i) => {
+      const fresh = sessionByID.get(entry.id);
+      const directory = fresh?.location?.directory ?? entry.directory ?? '';
+      out.push({
+        kind: 'session',
+        key: `recent:${entry.id}`,
+        id: entry.id,
+        title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
+        hint: basename(directory) || undefined,
+        state: stateOf(entry.id),
+        last: i === unpinnedRecents.length - 1,
+      });
+    });
+  }
+
+  if (groups.length > 0) {
+    out.push({ kind: 'section', key: 'sec:projects', title: searching ? 'Results' : 'Projects' });
+    for (const group of groups) {
+      const expanded = isExpanded(group);
+      const members = expanded ? group.sessions.length : 0;
+      const attentionCount = group.sessions.filter((s) => attentionIDs.has(s.id)).length;
+      const runningCount = group.sessions.filter((s) => workingIDs.has(s.id)).length;
+      out.push({
+        kind: 'project',
+        key: `p:${group.id}`,
+        group,
+        expanded,
+        last: members === 0,
+        attentionCount,
+        runningCount,
+      });
+      if (expanded) {
+        group.sessions.forEach((session, i) => {
+          out.push({
+            kind: 'session',
+            key: session.id,
+            id: session.id,
+            title: session.title?.trim() || 'Untitled session',
+            indent: true,
+            state: stateOf(session.id),
+            last: i === group.sessions.length - 1,
+          });
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ---------- rows ----------
+
+/** The group's state word; approvals outrank running work. */
+function groupStateLabel(attentionCount: number, runningCount: number): string | null {
+  if (attentionCount > 0) return `${attentionCount} waiting`;
+  if (runningCount > 0) return 'Working';
+  return null;
+}
+
+/** Screen-reader label for a project row: name, disclosure, size, state. */
+function groupAccessibilityLabel(
+  name: string,
+  expanded: boolean,
+  sessions: number,
+  attentionCount: number,
+  runningCount: number,
+): string {
+  const expansion = expanded ? 'expanded' : 'collapsed';
+  if (attentionCount > 0) {
+    return `${name}, ${expansion}, ${sessions} sessions, ${attentionCount} waiting for approval`;
+  }
+  if (runningCount > 0) return `${name}, ${expansion}, ${sessions} sessions, working`;
+  return `${name}, ${expansion}, ${sessions} sessions`;
+}
 
 /**
  * Disclosure row: chevron turns a quarter clockwise when the group opens —
@@ -172,25 +308,39 @@ function ProjectRow({
   }, [expanded, reduce, rotation]);
 
   const stateColor = attentionCount > 0 ? theme.caution : theme.running;
-  const stateLabel =
-    attentionCount > 0
-      ? `${attentionCount} waiting`
-      : runningCount > 0
-        ? 'Working'
-        : null;
+  const stateLabel = groupStateLabel(attentionCount, runningCount);
+  const accessibilityLabel = groupAccessibilityLabel(
+    group.name,
+    expanded,
+    group.sessions.length,
+    attentionCount,
+    runningCount,
+  );
+
+  let trailing: ReactElement | null = null;
+  if (stateLabel) {
+    trailing = (
+      <View style={styles.state}>
+        <StatusDot color={stateColor} size={7} />
+        <ThemedText type="caption" weight="medium" style={{ color: stateColor }}>
+          {stateLabel}
+        </ThemedText>
+      </View>
+    );
+  } else if (!expanded && group.sessions.length > 0) {
+    trailing = (
+      <ThemedText type="caption" style={{ color: theme.inkFaint }}>
+        {group.sessions.length}
+      </ThemedText>
+    );
+  }
 
   return (
     <View>
       <Pressable
         onPress={onToggle}
         accessibilityRole="button"
-        accessibilityLabel={`${group.name}, ${expanded ? 'expanded' : 'collapsed'}, ${group.sessions.length} sessions${
-          attentionCount > 0
-            ? `, ${attentionCount} waiting for approval`
-            : runningCount > 0
-              ? ', working'
-              : ''
-        }`}
+        accessibilityLabel={accessibilityLabel}
         style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.inkControl }]}>
         <Animated.View
           style={{
@@ -208,18 +358,7 @@ function ProjectRow({
         <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
           {group.name}
         </ThemedText>
-        {stateLabel ? (
-          <View style={styles.state}>
-            <StatusDot color={stateColor} size={7} />
-            <ThemedText type="caption" weight="medium" style={{ color: stateColor }}>
-              {stateLabel}
-            </ThemedText>
-          </View>
-        ) : !expanded && group.sessions.length > 0 ? (
-          <ThemedText type="caption" style={{ color: theme.inkFaint }}>
-            {group.sessions.length}
-          </ThemedText>
-        ) : null}
+        {trailing}
       </Pressable>
       {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
     </View>
@@ -233,6 +372,54 @@ function SectionHead({ title }: Readonly<{ title: string }>) {
     <ThemedText type="footnote" style={[styles.sectionHead, { color: theme.inkMuted }]}>
       {title}
     </ThemedText>
+  );
+}
+
+/** Screen-reader label: title, optional project hint, then live state. */
+function sessionAccessibilityLabel(
+  title: string,
+  hint: string | undefined,
+  state: SessionState | undefined,
+): string {
+  const hintPart = hint ? `, ${hint}` : '';
+  if (state === 'attention') return `${title}${hintPart}, needs you`;
+  if (state === 'working') return `${title}${hintPart}, working`;
+  return `${title}${hintPart}`;
+}
+
+/** Live state as a word plus a dot — never color alone. */
+function SessionStateTag({ state, color }: Readonly<{ state: SessionState; color: string }>) {
+  return (
+    <View style={styles.state}>
+      <StatusDot color={color} size={7} />
+      <ThemedText type="caption" weight="medium" style={{ color }}>
+        {state === 'attention' ? 'Needs you' : 'Working'}
+      </ThemedText>
+    </View>
+  );
+}
+
+/** The pin is a sibling of the row press, never a button inside one. */
+function SessionPinButton({
+  pinned,
+  onPress,
+}: Readonly<{ pinned: boolean; onPress: () => void }>) {
+  const theme = useTheme();
+  return (
+    <PressableScale
+      onPress={onPress}
+      hitSlop={8}
+      scaleTo={0.85}
+      style={styles.pinButton}
+      accessibilityLabel={pinned ? 'Unpin conversation' : 'Pin conversation'}
+      accessibilityState={{ selected: pinned }}>
+      <Glyph
+        set="mci"
+        name={pinned ? 'pin' : 'pin-outline'}
+        size={14}
+        color={pinned ? theme.accent : theme.inkFaint}
+      />
+    </PressableScale>
   );
 }
 
@@ -264,6 +451,7 @@ function SessionRow({
 }>) {
   const theme = useTheme();
   const stateColor = state === 'attention' ? theme.caution : theme.running;
+  const accessibilityLabel = sessionAccessibilityLabel(title, hint, state);
 
   return (
     <View>
@@ -273,9 +461,7 @@ function SessionRow({
         <Pressable
           onPress={onPress}
           accessibilityRole="button"
-          accessibilityLabel={`${title}${hint ? `, ${hint}` : ''}${
-            state === 'attention' ? ', needs you' : state === 'working' ? ', working' : ''
-          }`}
+          accessibilityLabel={accessibilityLabel}
           style={({ pressed }) => [
             styles.sessionPress,
             indent && styles.sessionRow,
@@ -291,32 +477,10 @@ function SessionRow({
               </ThemedText>
             ) : null}
           </View>
-          {state ? (
-            <View style={styles.state}>
-              <StatusDot color={stateColor} size={7} />
-              <ThemedText type="caption" weight="medium" style={{ color: stateColor }}>
-                {state === 'attention' ? 'Needs you' : 'Working'}
-              </ThemedText>
-            </View>
-          ) : null}
+          {state ? <SessionStateTag state={state} color={stateColor} /> : null}
           <Glyph name="chevron-forward" size={12} color={theme.inkFaint} />
         </Pressable>
-        {onTogglePin ? (
-          <PressableScale
-            onPress={onTogglePin}
-            hitSlop={8}
-            scaleTo={0.85}
-            style={styles.pinButton}
-            accessibilityLabel={pinned ? 'Unpin conversation' : 'Pin conversation'}
-            accessibilityState={{ selected: !!pinned }}>
-            <Glyph
-              set="mci"
-              name={pinned ? 'pin' : 'pin-outline'}
-              size={14}
-              color={pinned ? theme.accent : theme.inkFaint}
-            />
-          </PressableScale>
-        ) : null}
+        {onTogglePin ? <SessionPinButton pinned={!!pinned} onPress={onTogglePin} /> : null}
       </View>
       {!last ? <View style={[styles.separator, { backgroundColor: theme.hairline }]} /> : null}
     </View>
@@ -385,11 +549,12 @@ function AttentionBanner({
   onPress,
 }: Readonly<{ title: string; more: number; onPress: () => void }>) {
   const theme = useTheme();
+  const moreLabel = more > 0 ? `, ${more} more waiting` : '';
   return (
     <PressableScale
       onPress={onPress}
       scaleTo={0.99}
-      accessibilityLabel={`${title} needs approval${more > 0 ? `, ${more} more waiting` : ''}. Open session.`}
+      accessibilityLabel={`${title} needs approval${moreLabel}. Open session.`}
       style={[styles.banner, { backgroundColor: theme.cautionSoft }]}>
       <PulseDot color={theme.caution} />
       <View style={styles.bannerBody}>
@@ -465,10 +630,156 @@ function LoadError({
 
 // ---------- screen ----------
 
-export default function HomeScreen() {
+/** Nav + connection strip: wordmark, settings, and the named stream state. */
+function LauncherHeader({
+  streamStatus,
+  workingCount,
+  onRefresh,
+}: Readonly<{
+  streamStatus: StreamStatus;
+  workingCount: number;
+  onRefresh: () => void;
+}>) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const dotColor = {
+    connected: theme.positive,
+    connecting: theme.inkFaint,
+    disconnected: theme.negative,
+  }[streamStatus];
+  const statusLabel = {
+    connected: 'Connected',
+    connecting: 'Connecting to your PC',
+    disconnected: "Can't reach your PC",
+  }[streamStatus];
+  const statusDetail =
+    streamStatus === 'connected' && workingCount > 0 ? ` · ${workingCount} working` : '';
+  const workingLabel = workingCount > 0 ? `, ${workingCount} working` : '';
+
+  return (
+    <View style={{ paddingTop: insets.top }}>
+      <View style={styles.navBar}>
+        {/* The full wordmark is 270pt wide; on a narrow phone the compact
+            mark keeps the header on one line without shrinking the target. */}
+        <BrandWordmark
+          height={15}
+          text={width < 360 ? WORDMARK_COMPACT : undefined}
+          color={theme.ink}
+        />
+        <PressableScale
+          onPress={() => router.push('/settings')}
+          accessibilityLabel="Settings"
+          scaleTo={0.9}
+          style={styles.navAction}>
+          <Glyph name="settings-outline" size={19} color={theme.inkMuted} />
+        </PressableScale>
+      </View>
+      <PressableScale
+        onPress={onRefresh}
+        scaleTo={0.99}
+        hitSlop={8}
+        accessibilityLabel={`${statusLabel}${workingLabel}. Tap to refresh.`}
+        style={styles.statusStrip}>
+        <StatusDot color={dotColor} size={7} />
+        <ThemedText
+          type="caption"
+          themeColor={streamStatus === 'disconnected' ? 'negative' : 'inkMuted'}>
+          {statusLabel}
+          {statusDetail}
+        </ThemedText>
+        <View style={styles.statusSpacer} />
+        <Glyph name="refresh" size={12} color={theme.inkFaint} />
+      </PressableScale>
+    </View>
+  );
+}
+
+/** The three inline notices above the list, in priority order. */
+function LauncherBanners({
+  attentionSessions,
+  loaded,
+  error,
+  update,
+  onRetry,
+}: Readonly<{
+  attentionSessions: SessionInfo[];
+  /** True once the first sessions load has finished — banners wait for it. */
+  loaded: boolean;
+  error: string | null;
+  update: UpdateInfo | null;
+  onRetry: () => void;
+}>) {
+  const lead = attentionSessions[0] ?? null;
+  return (
+    <>
+      {lead && loaded ? (
+        <AttentionBanner
+          title={lead.title?.trim() || 'Untitled session'}
+          more={attentionSessions.length - 1}
+          onPress={() => router.push({ pathname: '/session/[id]', params: { id: lead.id } })}
+        />
+      ) : null}
+      {error && loaded ? (
+        <NoticeBanner
+          tone="danger"
+          icon="wifi-alert"
+          text={error}
+          actionLabel="Retry"
+          onPress={onRetry}
+        />
+      ) : null}
+      {update ? (
+        <NoticeBanner
+          tone="accent"
+          icon="cellphone-arrow-down"
+          text={`Version ${update.version} is available`}
+          actionLabel="Update"
+          onPress={() => router.push('/update')}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** What the list shows when it is empty — no matches, or no sessions yet. */
+function EmptyLauncher({
+  searching,
+  query,
+  onClear,
+}: Readonly<{ searching: boolean; query: string; onClear: () => void }>) {
+  const theme = useTheme();
+  if (searching) {
+    return (
+      <View style={styles.emptySearch}>
+        <ThemedText type="body" themeColor="inkMuted">
+          No matches for “{query}”
+        </ThemedText>
+        <PressableScale
+          onPress={onClear}
+          accessibilityLabel="Clear search"
+          style={styles.clearSearch}>
+          <ThemedText type="caption" style={{ color: theme.accent }}>
+            Clear search
+          </ThemedText>
+        </PressableScale>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.empty}>
+      <Glyph name="terminal-outline" size={28} color={theme.inkFaint} />
+      <ThemedText type="headline">No sessions yet</ThemedText>
+      <ThemedText type="callout" themeColor="inkMuted" style={styles.emptyText}>
+        Start one in OpenCode on your PC — it shows up here.
+      </ThemedText>
+    </View>
+  );
+}
+
+export default function HomeScreen() {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { ready, api } = useConnection();
   const { preferences } = usePreferences();
 
@@ -713,205 +1024,133 @@ export default function HomeScreen() {
     return next;
   }, [activeIDs, attentionIDs]);
 
-  const rows = useMemo(() => {
-    const out: Row[] = [];
-    const stateOf = (id: string): SessionState | undefined =>
-      attentionIDs.has(id) ? 'attention' : workingIDs.has(id) ? 'working' : undefined;
-
-    // Pinned conversations lead — a deliberate choice outranks recency; a
-    // search narrows the list to matches only.
-    if (!searching && pinned.length > 0) {
-      out.push({ kind: 'section', key: 'sec:pinned', title: 'Pinned' });
-      pinned.forEach((entry, i) => {
-        const fresh = sessionByID.get(entry.id);
-        const directory = fresh?.location?.directory ?? entry.directory ?? '';
-        out.push({
-          kind: 'session',
-          key: `pinned:${entry.id}`,
-          id: entry.id,
-          title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
-          hint: basename(directory) || undefined,
-          state: stateOf(entry.id),
-          last: i === pinned.length - 1,
-        });
-      });
-    }
-
-    // Recents sit above the fold — continuing the last conversation stays
-    // the fastest path. Anything already pinned above would read as a double.
-    const unpinnedRecents = recents.filter((entry) => !pinnedIDs.has(entry.id));
-    if (!searching && unpinnedRecents.length > 0) {
-      out.push({ kind: 'section', key: 'sec:recent', title: 'Recent' });
-      unpinnedRecents.forEach((entry, i) => {
-        const fresh = sessionByID.get(entry.id);
-        const directory = fresh?.location?.directory ?? entry.directory ?? '';
-        out.push({
-          kind: 'session',
-          key: `recent:${entry.id}`,
-          id: entry.id,
-          title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
-          hint: basename(directory) || undefined,
-          state: stateOf(entry.id),
-          last: i === unpinnedRecents.length - 1,
-        });
-      });
-    }
-
-    if (groups.length > 0) {
-      out.push({ kind: 'section', key: 'sec:projects', title: searching ? 'Results' : 'Projects' });
-      for (const group of groups) {
-        const expanded = isExpanded(group);
-        const members = expanded ? group.sessions.length : 0;
-        const attentionCount = group.sessions.filter((s) => attentionIDs.has(s.id)).length;
-        const runningCount = group.sessions.filter((s) => workingIDs.has(s.id)).length;
-        out.push({
-          kind: 'project',
-          key: `p:${group.id}`,
-          group,
-          expanded,
-          last: members === 0,
-          attentionCount,
-          runningCount,
-        });
-        if (expanded) {
-          group.sessions.forEach((session, i) => {
-            out.push({
-              kind: 'session',
-              key: session.id,
-              id: session.id,
-              title: session.title?.trim() || 'Untitled session',
-              indent: true,
-              state: stateOf(session.id),
-              last: i === group.sessions.length - 1,
-            });
-          });
-        }
-      }
-    }
-    return out;
-  }, [
-    attentionIDs,
-    groups,
-    isExpanded,
-    pinned,
-    pinnedIDs,
-    recents,
-    searching,
-    sessionByID,
-    workingIDs,
-  ]);
+  const rows = useMemo(
+    () =>
+      buildRows({
+        searching,
+        pinned,
+        pinnedIDs,
+        recents,
+        sessionByID,
+        groups,
+        isExpanded,
+        attentionIDs,
+        workingIDs,
+      }),
+    [
+      attentionIDs,
+      groups,
+      isExpanded,
+      pinned,
+      pinnedIDs,
+      recents,
+      searching,
+      sessionByID,
+      workingIDs,
+    ],
+  );
 
   if (!ready) return <ThemedView style={styles.screen} />;
   if (!api) return <Redirect href="/setup" />;
 
-  const dotColor = {
-    connected: theme.positive,
-    connecting: theme.inkFaint,
-    disconnected: theme.negative,
-  }[streamStatus];
-
-  const statusLabel = {
-    connected: 'Connected',
-    connecting: 'Connecting to your PC',
-    disconnected: "Can't reach your PC",
-  }[streamStatus];
-
-  const workingCount = workingIDs.size;
-  const statusDetail =
-    streamStatus === 'connected' && workingCount > 0 ? ` · ${workingCount} working` : '';
-  const leadAttention = attentionSessions[0] ?? null;
-
-  const empty: ReactElement = searching ? (
-    <View style={styles.emptySearch}>
-      <ThemedText type="body" themeColor="inkMuted">
-        No matches for “{search.trim()}”
-      </ThemedText>
-      <PressableScale
-        onPress={() => setSearch('')}
-        accessibilityLabel="Clear search"
-        style={styles.clearSearch}>
-        <ThemedText type="caption" style={{ color: theme.accent }}>
-          Clear search
-        </ThemedText>
-      </PressableScale>
-    </View>
-  ) : (
-    <View style={styles.empty}>
-      <Glyph name="terminal-outline" size={28} color={theme.inkFaint} />
-      <ThemedText type="headline">No sessions yet</ThemedText>
-      <ThemedText type="callout" themeColor="inkMuted" style={styles.emptyText}>
-        Start one in OpenCode on your PC — it shows up here.
-      </ThemedText>
-    </View>
-  );
+  let content: ReactElement;
+  if (sessions === null && !error) {
+    content = (
+      <View style={styles.center}>
+        <View style={styles.centerRow}>
+          <ActivityIndicator size="small" color={theme.inkMuted} />
+          <ThemedText type="callout" style={{ color: theme.inkMuted }}>
+            Reaching your PC…
+          </ThemedText>
+        </View>
+      </View>
+    );
+  } else if (sessions === null && error) {
+    content = <LoadError message={error} busy={refreshing} onRetry={() => void load()} />;
+  } else {
+    content = (
+      <FlatList
+        data={rows}
+        keyExtractor={(row) => row.key}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load()}
+            tintColor={theme.inkMuted}
+            colors={[theme.accent]}
+          />
+        }
+        ListFooterComponent={<FooterLink />}
+        renderItem={({ item }) => {
+          if (item.kind === 'section') {
+            return <SectionHead title={item.title} />;
+          }
+          if (item.kind === 'project') {
+            return (
+              <ProjectRow
+                group={item.group}
+                expanded={item.expanded}
+                last={item.last}
+                attentionCount={item.attentionCount}
+                runningCount={item.runningCount}
+                onToggle={() =>
+                  setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
+                }
+              />
+            );
+          }
+          return (
+            <SessionRow
+              title={item.title}
+              hint={item.hint}
+              indent={item.indent}
+              pinned={pinnedIDs.has(item.id)}
+              state={item.state}
+              last={item.last}
+              onPress={() =>
+                router.push({ pathname: '/session/[id]', params: { id: item.id } })
+              }
+              onTogglePin={() =>
+                void togglePin({
+                  id: item.id,
+                  title: item.title,
+                  directory: sessionByID.get(item.id)?.location?.directory,
+                })
+              }
+            />
+          );
+        }}
+        ListEmptyComponent={
+          <EmptyLauncher
+            searching={searching}
+            query={search.trim()}
+            onClear={() => setSearch('')}
+          />
+        }
+      />
+    );
+  }
 
   return (
     <ThemedView style={styles.screen}>
       {/* nav — wordmark left, settings right, connection state named below */}
-      <View style={{ paddingTop: insets.top }}>
-        <View style={styles.navBar}>
-          {/* The full wordmark is 270pt wide; on a narrow phone the compact
-              mark keeps the header on one line without shrinking the target. */}
-          <BrandWordmark
-            height={15}
-            text={width < 360 ? WORDMARK_COMPACT : undefined}
-            color={theme.ink}
-          />
-          <PressableScale
-            onPress={() => router.push('/settings')}
-            accessibilityLabel="Settings"
-            scaleTo={0.9}
-            style={styles.navAction}>
-            <Glyph name="settings-outline" size={19} color={theme.inkMuted} />
-          </PressableScale>
-        </View>
-        <PressableScale
-          onPress={() => void load()}
-          scaleTo={0.99}
-          hitSlop={8}
-          accessibilityLabel={`${statusLabel}${
-            workingCount > 0 ? `, ${workingCount} working` : ''
-          }. Tap to refresh.`}
-          style={styles.statusStrip}>
-          <StatusDot color={dotColor} size={7} />
-          <ThemedText
-            type="caption"
-            themeColor={streamStatus === 'disconnected' ? 'negative' : 'inkMuted'}>
-            {statusLabel}
-            {statusDetail}
-          </ThemedText>
-          <View style={styles.statusSpacer} />
-          <Glyph name="refresh" size={12} color={theme.inkFaint} />
-        </PressableScale>
-      </View>
-
-      {leadAttention && sessions !== null ? (
-        <AttentionBanner
-          title={leadAttention.title?.trim() || 'Untitled session'}
-          more={attentionSessions.length - 1}
-          onPress={() =>
-            router.push({ pathname: '/session/[id]', params: { id: leadAttention.id } })
-          }
-        />
-      ) : null}
-      {error && sessions !== null ? (
-        <NoticeBanner
-          tone="danger"
-          icon="wifi-alert"
-          text={error}
-          actionLabel="Retry"
-          onPress={() => void load()}
-        />
-      ) : null}
-      {visibleUpdate ? (
-        <NoticeBanner
-          tone="accent"
-          icon="cellphone-arrow-down"
-          text={`Version ${visibleUpdate.version} is available`}
-          actionLabel="Update"
-          onPress={() => router.push('/update')}
-        />
-      ) : null}
+      <LauncherHeader
+        streamStatus={streamStatus}
+        workingCount={workingIDs.size}
+        onRefresh={() => void load()}
+      />
+      <LauncherBanners
+        attentionSessions={attentionSessions}
+        loaded={sessions !== null}
+        error={error}
+        update={visibleUpdate}
+        onRetry={() => void load()}
+      />
 
       {/* searchable — one field, debounced upstream by local filtering */}
       <View style={styles.searchWrap}>
@@ -940,77 +1179,7 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {sessions === null && !error ? (
-        <View style={styles.center}>
-          <View style={styles.centerRow}>
-            <ActivityIndicator size="small" color={theme.inkMuted} />
-            <ThemedText type="callout" style={{ color: theme.inkMuted }}>
-              Reaching your PC…
-            </ThemedText>
-          </View>
-        </View>
-      ) : sessions === null && error ? (
-        <LoadError message={error} busy={refreshing} onRetry={() => void load()} />
-      ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(row) => row.key}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: insets.bottom + 24 },
-          ]}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void load()}
-              tintColor={theme.inkMuted}
-              colors={[theme.accent]}
-            />
-          }
-          ListFooterComponent={<FooterLink />}
-          renderItem={({ item }) => {
-            if (item.kind === 'section') {
-              return <SectionHead title={item.title} />;
-            }
-            if (item.kind === 'project') {
-              return (
-                <ProjectRow
-                  group={item.group}
-                  expanded={item.expanded}
-                  last={item.last}
-                  attentionCount={item.attentionCount}
-                  runningCount={item.runningCount}
-                  onToggle={() =>
-                    setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
-                  }
-                />
-              );
-            }
-            return (
-              <SessionRow
-                title={item.title}
-                hint={item.hint}
-                indent={item.indent}
-                pinned={pinnedIDs.has(item.id)}
-                state={item.state}
-                last={item.last}
-                onPress={() =>
-                  router.push({ pathname: '/session/[id]', params: { id: item.id } })
-                }
-                onTogglePin={() =>
-                  void togglePin({
-                    id: item.id,
-                    title: item.title,
-                    directory: sessionByID.get(item.id)?.location?.directory,
-                  })
-                }
-              />
-            );
-          }}
-          ListEmptyComponent={empty}
-        />
-      )}
+      {content}
     </ThemedView>
   );
 }

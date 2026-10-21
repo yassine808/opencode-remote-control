@@ -264,6 +264,53 @@ function captionRow(message: GenericMessage): RowBase {
   return { kind: 'caption', id: message.id, text: label ? `${slug} — ${label}` : slug };
 }
 
+// One footer per prompt: copy + how long the whole turn took.
+interface Turn {
+  mid: string;
+  start?: number;
+  end?: number;
+  texts: string[];
+}
+
+/** Mutable state of the walk; kept in one object so the helpers can share it. */
+interface RowBuilder {
+  rows: Row[];
+  mid: string;
+  turn: Turn | null;
+}
+
+function pushRow(st: RowBuilder, row: RowBase): void {
+  const padTop = st.rows.length > 0 ? padTopFor(st.rows.at(-1), row) : 0;
+  st.rows.push({ ...row, padTop, mid: st.mid });
+}
+
+function closeTurn(st: RowBuilder): void {
+  const t = st.turn;
+  st.turn = null;
+  if (!t) return;
+  const text = t.texts.join('\n\n').trim();
+  if (!text) return;
+  const ms = t.start != null && t.end != null && t.end > t.start ? t.end - t.start : null;
+  const saved = st.mid;
+  st.mid = t.mid;
+  pushRow(st, { kind: 'footer', id: `${t.mid}-footer`, text, ms });
+  st.mid = saved;
+}
+
+function appendUserTurn(st: RowBuilder, user: UserMessage): void {
+  closeTurn(st);
+  st.turn = { mid: user.id, start: user.time?.created, texts: [] };
+  userRows(user).forEach((row) => pushRow(st, row));
+}
+
+function extendAssistantTurn(st: RowBuilder, msg: AssistantMessage): void {
+  const cur: Turn = st.turn ?? { mid: msg.id, texts: [] };
+  st.turn = cur;
+  const endAt = msg.time?.completed ?? msg.time?.streamed ?? msg.time?.created;
+  if (endAt != null) cur.end = Math.max(cur.end ?? 0, endAt);
+  assistantRows(msg, cur.texts).forEach((row) => pushRow(st, row));
+}
+
 /**
  * Flatten messages into transcript rows.
  *
@@ -272,72 +319,35 @@ function captionRow(message: GenericMessage): RowBase {
  * that >3x ratio is load-bearing. See the design notes.
  */
 function buildRows(messages: MessageInfo[], running: boolean): Row[] {
-  const rows: Row[] = [];
-  let mid = '';
-
-  // One footer per prompt: copy + how long the whole turn took.
-  interface Turn {
-    mid: string;
-    start?: number;
-    end?: number;
-    texts: string[];
-  }
-  const turnRef: { cur: Turn | null } = { cur: null };
-  const flushTurn = () => {
-    const t = turnRef.cur;
-    turnRef.cur = null;
-    if (!t) return;
-    const text = t.texts.join('\n\n').trim();
-    if (!text) return;
-    const ms = t.start != null && t.end != null && t.end > t.start ? t.end - t.start : null;
-    const saved = mid;
-    mid = t.mid;
-    push({ kind: 'footer', id: `${t.mid}-footer`, text, ms });
-    mid = saved;
-  };
-
-  const push = (row: RowBase) => {
-    const padTop = rows.length > 0 ? padTopFor(rows.at(-1), row) : 0;
-    rows.push({ ...row, padTop, mid });
-  };
+  const st: RowBuilder = { rows: [], mid: '', turn: null };
 
   for (const message of messages) {
-    mid = message.id;
+    st.mid = message.id;
     if (message.type === 'user') {
-      flushTurn();
-      const user = message as UserMessage;
-      turnRef.cur = { mid: message.id, start: user.time?.created, texts: [] };
-      userRows(user).forEach((row) => push(row));
+      appendUserTurn(st, message as UserMessage);
       continue;
     }
-
     if (message.type === 'assistant') {
-      const msg = message as AssistantMessage;
-      const cur: Turn = turnRef.cur ?? { mid: message.id, texts: [] };
-      turnRef.cur = cur;
-      const endAt = msg.time?.completed ?? msg.time?.streamed ?? msg.time?.created;
-      if (endAt != null) cur.end = Math.max(cur.end ?? 0, endAt);
-      assistantRows(msg, cur.texts).forEach((row) => push(row));
+      extendAssistantTurn(st, message as AssistantMessage);
       continue;
     }
+    // `idle` needs no divider (turn end is spacing); `synthetic` notices are
+    // injected by the server for the model — neither belongs in the chat.
+    if (message.type === 'idle' || message.type === 'synthetic') continue;
 
-    if (message.type === 'idle') continue; // no divider lines — turn end is spacing
-    // Notices the server injects for the model (e.g. "shell finished") — not part of the chat.
-    if (message.type === 'synthetic') continue;
-
-    push(captionRow(message as GenericMessage));
+    pushRow(st, captionRow(message as GenericMessage));
   }
 
   // The running turn gets its footer when it finishes.
-  if (!running) flushTurn();
+  if (!running) closeTurn(st);
 
   // A reasoning part is live only while it is the newest thing on screen.
-  if (running && rows.length > 0) {
-    const last = rows.at(-1);
+  if (running && st.rows.length > 0) {
+    const last = st.rows.at(-1);
     if (last?.kind === 'reasoning') last.active = true;
   }
 
-  return rows;
+  return st.rows;
 }
 
 /**
