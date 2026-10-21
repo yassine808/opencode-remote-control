@@ -1,5 +1,5 @@
 - [x] shown images in the conversation
 - [x] better design
 - [x] ability to change the model
-- [ ] auto-update itself (not on Play Store - sideloaded .apk that checks GitHub for a new .apk and installs it)
-- [ ] make questions have colors, and interactable!
+- [x] auto-update itself (not on Play Store - sideloaded .apk that checks GitHub for a new .apk and installs it)
+- [x] make questions have colors, and interactable!
