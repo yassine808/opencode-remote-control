@@ -1,7 +1,6 @@
 import { exec } from "node:child_process"
 import { Plugin } from "@opencode/plugin/tui"
 
-const TOKEN = ":49374"
 const ALLOW = /^(brave|chrome|code|msedge|firefox|opera|vivaldi|ngrok|opentunnel)$/
 const TASK_LINE = /^"([^"]+)","(\d+)"/
 
@@ -15,26 +14,33 @@ function run(cmd: string): Promise<string> {
 }
 
 // RC active = an RC client (browser/tunnel process) has an established
-// connection to the OpenCode server port. Same check as the PS prompt dot.
+// connection to the OpenCode server. v2 binds a dynamic loopback port, so the
+// listeners are found by process name rather than by a fixed port.
 async function isRcActive(): Promise<boolean> {
-  const net = await run("netstat -ano")
-  const pids = new Set<string>()
-  for (const line of net.split(/\r?\n/)) {
-    if (!line.includes("ESTABLISHED") || !line.includes(TOKEN)) continue
-    const parts = line.trim().split(/\s+/)
-    if (parts.length < 5) continue
-    if (!parts[2].endsWith(TOKEN)) continue
-    pids.add(parts[4])
-  }
-  if (pids.size === 0) return false
-  const tasks = await run("tasklist /FO CSV /NH")
+  const [net, tasks] = await Promise.all([run("netstat -ano"), run("tasklist /FO CSV /NH")])
   const names = new Map<string, string>()
   for (const line of tasks.split(/\r?\n/)) {
     const match = TASK_LINE.exec(line)
     if (match) names.set(match[2], match[1].replace(/\.exe$/i, "").toLowerCase())
   }
-  for (const pid of pids) {
-    if (ALLOW.test(names.get(pid) ?? "")) return true
+
+  const serverPorts = new Set<string>()
+  const established: { foreign: string; pid: string }[] = []
+  for (const line of net.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 5) continue
+    if (parts[3] === "LISTENING" && names.get(parts[4]) === "opencode") {
+      const port = parts[1].slice(parts[1].lastIndexOf(":") + 1)
+      if (port) serverPorts.add(`:${port}`)
+    } else if (parts[3] === "ESTABLISHED") {
+      established.push({ foreign: parts[2], pid: parts[4] })
+    }
+  }
+  if (serverPorts.size === 0) return false
+
+  for (const conn of established) {
+    if (![...serverPorts].some((port) => conn.foreign.endsWith(port))) continue
+    if (ALLOW.test(names.get(conn.pid) ?? "")) return true
   }
   return false
 }
