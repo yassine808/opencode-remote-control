@@ -14,10 +14,11 @@ import {
 } from '@expo-google-fonts/roboto-mono';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import { StatusBar } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { StatusBar, StyleSheet, View } from 'react-native';
 
 import { AppLock } from '@/components/app-lock';
+import { StartupIntro } from '@/components/startup-intro';
 import { useTheme } from '@/hooks/use-theme';
 import { ConnectionProvider } from '@/lib/connection';
 import { NotificationsProvider } from '@/lib/notifications';
@@ -54,6 +55,9 @@ function AppShell({ fontsLoaded }: Readonly<{ fontsLoaded: boolean }>) {
   const { ready, scheme } = usePreferences();
   const theme = useTheme();
   const dark = scheme === 'dark';
+  const [introDone, setIntroDone] = useState(false);
+
+  const finishIntro = useCallback(() => setIntroDone(true), []);
 
   useEffect(() => {
     if (fontsLoaded && ready) SplashScreen.hideAsync().catch(() => {});
@@ -78,17 +82,28 @@ function AppShell({ fontsLoaded }: Readonly<{ fontsLoaded: boolean }>) {
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <ConnectionProvider>
         <NotificationsProvider>
-          <AppLock>
-            {/* Each screen draws its own header so title, status and actions sit together. */}
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: theme.canvas },
-              }}
-            />
-          </AppLock>
+          <View style={styles.fill}>
+            <View
+              style={styles.fill}
+              importantForAccessibility={introDone ? 'auto' : 'no-hide-descendants'}>
+              <AppLock autoPrompt={introDone}>
+                {/* Each screen draws its own header so title, status and actions sit together. */}
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: theme.canvas },
+                  }}
+                />
+              </AppLock>
+            </View>
+            {introDone ? null : <StartupIntro onFinish={finishIntro} />}
+          </View>
         </NotificationsProvider>
       </ConnectionProvider>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+});

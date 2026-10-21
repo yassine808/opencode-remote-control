@@ -19,7 +19,10 @@ import { Button } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 import { usePreferences } from '@/lib/preferences';
 
-export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
+export function AppLock({
+  children,
+  autoPrompt = true,
+}: Readonly<{ children: ReactNode; autoPrompt?: boolean }>) {
   const theme = useTheme();
   const { preferences } = usePreferences();
   // Browsers have no device-auth prompt to show; the web preview opens ungated.
@@ -64,12 +67,13 @@ export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
   }, []);
 
   // Prompt as soon as the cover is up — scheduled so the cover paints first;
-  // the system dialog would otherwise open over the splash.
+  // the system dialog would otherwise open over the splash or startup intro.
+  // The launch surface holds `autoPrompt` back until it has finished.
   useEffect(() => {
-    if (!locked) return;
+    if (!locked || !autoPrompt) return;
     const t = setTimeout(() => void unlock(), 350);
     return () => clearTimeout(t);
-  }, [locked, unlock]);
+  }, [autoPrompt, locked, unlock]);
 
   // Turning the gate off drops the cover immediately (derived above). Turning
   // it back on arms it for the next background leave rather than covering the
@@ -82,13 +86,14 @@ export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
         lockedRef.current = true;
         setArmed(true);
       } else if (state === 'active' && lockedRef.current && preferences.requireUnlock) {
-        // Returning to a locked app: prompt straight away. Guarded by
-        // `prompting`, so the mount-time timer can never double-fire it.
-        void unlock();
+        // Returning to a locked app: prompt straight away once the launch
+        // surface is gone. Guarded by `prompting`, so the mount-time timer can
+        // never double-fire it.
+        if (autoPrompt) void unlock();
       }
     });
     return () => sub.remove();
-  }, [unlock, preferences.requireUnlock]);
+  }, [autoPrompt, unlock, preferences.requireUnlock]);
 
   return (
     <View style={styles.fill}>

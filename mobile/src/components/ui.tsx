@@ -47,6 +47,59 @@ export function useReduceMotion(): boolean {
   return reduce;
 }
 
+/**
+ * The same preference, plus whether the initial value is known. Launch motion
+ * must not start on the default `false` and then discover `true` a frame later:
+ * that reads as a twitch rather than a skipped animation.
+ */
+export function useReduceMotionState(): { reduce: boolean; ready: boolean } {
+  const [reduce, setReduce] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    let settled = false;
+
+    const settle = (value: boolean) => {
+      if (!mounted) return;
+      settled = true;
+      setReduce(value);
+      setReady(true);
+    };
+
+    // A platform that never answers must not hold the launch surface forever.
+    const fallback = setTimeout(() => {
+      if (mounted && !settled) setReady(true);
+    }, 500);
+
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((v) => {
+        settled = true;
+        clearTimeout(fallback);
+        settle(v);
+      })
+      .catch(() => {
+        settled = true;
+        clearTimeout(fallback);
+        settle(false);
+      });
+
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (v) => {
+      settled = true;
+      clearTimeout(fallback);
+      settle(v);
+    });
+
+    return () => {
+      mounted = false;
+      clearTimeout(fallback);
+      sub?.remove?.();
+    };
+  }, []);
+
+  return { reduce, ready };
+}
+
 // ---------- press feedback ----------
 
 export function PressableScale({

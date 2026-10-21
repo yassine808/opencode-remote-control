@@ -171,6 +171,22 @@ const dark: Palette = {
 
 export const Colors: Record<'light' | 'dark', Palette> = { light, dark };
 
+/**
+ * Launch-surface brand colors — the launcher icon, splash and startup intro.
+ * These are deliberately outside the in-app palette: the app opens on the
+ * OpenCode blueprint blue and then fades into the deck. `blue` mirrors the
+ * splash background in `app.json`.
+ */
+export const Brand = {
+  blue: '#208AEF',
+  blueLight: '#49A8FF',
+  blueDeep: '#0273DF',
+  blueMist: '#DCEBFF',
+  cyan: '#2CCFE8',
+  glass: '#0A1219',
+  white: '#FFFFFF',
+} as const;
+
 export type ThemeColor = keyof Omit<Palette, 'scheme'>;
 
 // ---------- space ----------

@@ -174,6 +174,9 @@ The state lights. Each one pairs with a translucent wash of the same hue; washes
 
 The morning deck (light scheme) mirrors the night one: **Frost Deck** #EEF1F6 background, **Panel White** #FFFFFF elements, **Cool Steel** #E2E7F0 selected, **Frost Well** #E7EBF3 code, **Frost Hairline** #DAE0EB seams, **Deck Ink** #0D1420 / **Slate** #566074 / **Mist** #8791A3 text, and the same five signals at daylight intensity — Signal Cobalt deepens to #2F5BFF, Harbor Cyan #0A8FA8, Burnt Amber #B86E00, Signal Coral #D63950, Harbor Mint #168A5A.
 
+### Launch Surface
+The launcher icon, splash and startup intro are the one brand exception: OpenCode blueprint blue (#208AEF, with the icon's #49A8FF → #0273DF gradient), a translucent terminal frame and the Watch Cyan cursor. This surface exists only before the app and does not change the state-only color rule inside it.
+
 ### Named Rules
 **The State-Only Color Rule.** Color communicates state or action, never mood. If a surface is cobalt, it is because it is *the* action on that screen. There are no tinted sections, no colored headers, no decorative accents.
 
