@@ -1,8 +1,8 @@
 # OpenCode Mobile Remote — Plan (v1, as-built)
 
-Control OpenCode sessions on Yassine's Windows PC from an Android phone, from anywhere — like Claude Code's Remote Control. The app talks **directly** to OpenCode's HTTP API over the `opencode pair --remote` tunnel. No custom bridge, no PWA, no LAN mode.
+Control OpenCode sessions on Yassine's Windows PC from an Android phone, from anywhere — like Claude Code's Remote Control. The app talks **directly** to OpenCode's HTTP API over the `opencode pair --remote` tunnel. No custom bridge, no PWA. The default path is the tunnel; a full LAN pairing link is also supported when the server is deliberately bound to the LAN.
 
-**Status:** v1 vertical slice implemented, typechecked, and pushed (`6db1d78`). Next: device test in Expo Go, then ntfy notifications (M6').
+**Status:** v1 vertical slice implemented, typechecked, and pushed (`6db1d78`). Local session alerts are implemented; reliable background delivery (ntfy, M6') remains backlog.
 **Repo:** https://github.com/yassine808/opencode-remote-control
 
 ---
@@ -11,7 +11,7 @@ Control OpenCode sessions on Yassine's Windows PC from an Android phone, from an
 
 | Flow | Implementation |
 |---|---|
-| Pair | Scan QR (or paste link) from `opencode pair --remote --yes`; server URL + token stored in SecureStore |
+| Pair | Scan QR (or paste link) from `opencode pair --remote --yes`; a LAN link from `opencode pair --url http://<pc-ip>:<port>` also works; server URL + token stored in SecureStore |
 | Stay paired | Token lives ~30 days; app renews it silently when < 5 days remain (on launch + app foreground) — no PC screen needed |
 | Sessions | List of all sessions with running/idle status, pending-approval badges; auto-refresh from SSE + 15 s poll |
 | Transcript | Live: streaming text + reasoning deltas, tool call cards (status/input/output, expandable), token/cost updates |
@@ -19,7 +19,7 @@ Control OpenCode sessions on Yassine's Windows PC from an Android phone, from an
 | Approvals | Cards for pending permission requests with Allow once / Always / Reject — the safety boundary for remote use |
 | Resilience | Refetch on SSE reconnect, screen focus, and after tool/lifecycle events; connection state banner |
 
-**Not in v1 (backlog):** sync engine with seq-gap detection, diff viewer, agent forms (questions), revert/compact, model/agent switching, image attachments, push notifications, multiple PCs/servers, iOS, LAN mode, offline cache.
+**Not in v1 (backlog):** sync engine with seq-gap detection, diff viewer, agent forms (questions), revert/compact, model/agent switching, image attachments, background push notifications, multiple PCs/servers, iOS, LAN auto-discovery (full LAN links already work), offline cache.
 
 ---
 
@@ -35,9 +35,9 @@ Android (Expo SDK 58 app, mobile/)
   ├─ src/app/index.tsx      sessions list
   └─ src/app/session/[id].tsx  transcript + composer + approvals + stop
         │
-        │ HTTPS (OpenTunnel https://<random-domain>)
+        │ HTTPS (OpenTunnel https://<random-domain>) or HTTP (LAN)
         ▼
-Windows PC ── OpenCode background service (127.0.0.1:49374 on this machine)
+Windows PC ── OpenCode background service (dynamic loopback port; `opencode service status`)
               ▲ PowerShell TUI(s) attach here — every session is visible
 ```
 
@@ -45,12 +45,12 @@ Repo layout: single Expo app at `mobile/` plus `plugins/rc-dot/` (PC-side TUI in
 
 ### PC-side indicator (plugins/rc-dot)
 
-CLI plugin for the PC: the TUI footer shows green `● RC active` when a paired client has a live connection to the background server, red `● RC disabled` otherwise — a glance check while sitting at the PC. Install: copy the folder to `~/.config/opencode/plugins/rc-dot/` and restart OpenCode (details in `plugins/rc-dot/README.md`).
+CLI plugin for the PC: the TUI footer shows green `● RC active` when a local browser/editor or external tunnel client has a live connection to the background server, red `● RC disabled` otherwise — a glance check while sitting at the PC. OpenCode v2 runs its built-in tunnel inside the server process, so a phone connected through that tunnel is not a separate allow-listed client. Install: copy the folder to `~/.config/opencode/plugins/rc-dot/` and restart OpenCode (details in `plugins/rc-dot/README.md`).
 
 ### Decisions (as-built)
 
 - **DD1 · Direct to OpenCode API.** No bridge process. Everything the app needs is already exposed.
-- **DD2 · Remote-first.** Pair via the tunnel URL; store only the session token, never the password.
+- **DD2 · Remote-first.** Pair via the tunnel URL (or an explicit LAN link); store only the session token, never the password.
 - **DD3 · Silent renewal.** `POST /api/pair` (authenticated) → one-time code → `GET /auth/connect/:code` with `Accept: application/json` → fresh token. **Proven live in M0.**
 - **DD4 · Stream deltas + refetch on signal (v1 simplification).** SSE carries text/reasoning deltas applied in memory; tool/lifecycle events trigger a 500 ms debounced transcript refetch. No seq tracking yet; `durable.seq` is logged in `__DEV__` from day one to inform a future sync engine.
 - **DD5 · Direct HTTP client** over `expo/fetch`, typed from the `/doc` OpenAPI spec — not `@opencode/client` (avoids Metro/RN bundling risk).

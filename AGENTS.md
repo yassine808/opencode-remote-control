@@ -29,6 +29,7 @@ Remote control for OpenCode: an Android app that drives OpenCode sessions on thi
 
 ## Gotchas
 
-- The OpenCode background server listens on `127.0.0.1:49374`; the app (via tunnel) and the rc-dot plugin both assume it. The plugin's port is an editable constant in `tui.tsx`.
-- LAN mode is not a target: the phone connects over mobile data through `opencode pair --remote` (OpenTunnel).
+- The OpenCode v2 background server binds a dynamic loopback port; `opencode service status` prints the current URL (for example `http://127.0.0.1:45278`). The app uses the URL returned by `opencode pair`; the rc-dot plugin discovers the listener by process name.
+- Default pairing is the `opencode pair --remote` tunnel. A full LAN pairing link also works: bind the server with `opencode service set hostname 0.0.0.0` and restart it (`opencode service restart`), read the port from `opencode service status`, then mint the link with `opencode pair --url http://<pc-lan-ip>:<port>`. The app rejects a bare `host:port` — the one-time code is after `/auth/connect/`. The Expo dev-server port (`8977`/`8978`) is not the OpenCode port.
+- LAN pairing is plain HTTP. `mobile/plugins/with-cleartext.js` sets `android:usesCleartextTraffic="true"` so release builds can reach it; the token and API traffic are unencrypted on the LAN. Prefer the HTTPS tunnel on untrusted networks, and bind back to `127.0.0.1` when LAN access is no longer needed.
 - `cli.json` has `session.permissions: "autoaccept"` while `opencode.json` sets `bash`/`edit` to `ask` — verify effective behavior with a fresh session before any remote exposure.

@@ -2,7 +2,7 @@
 
 **Your OpenCode sessions, in your pocket.**
 
-An Android app that talks directly to the OpenCode server on your PC over the official `opencode pair --remote` tunnel. Watch a session stream, send a prompt, stop a run, or approve a tool call — from anywhere with a connection.
+An Android app that talks directly to the OpenCode server on your PC over the official `opencode pair --remote` tunnel, or a LAN link you mint yourself. Watch a session stream, send a prompt, stop a run, or approve a tool call — from anywhere with a connection.
 
 [![CI](https://github.com/yassine808/opencode-remote-control/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yassine808/opencode-remote-control/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/yassine808/opencode-remote-control/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/yassine808/opencode-remote-control/actions/workflows/codeql.yml)
@@ -28,12 +28,13 @@ OpenCode runs on your machine, which is exactly where you are not. This app is t
 - **Streaming transcript** — text and reasoning deltas, tool calls with inputs and output, token and cost counters.
 - **Steer or stop** — send another prompt into a running turn, or interrupt it.
 - **Approvals that read** — allow once / always / reject, with the exact command and a card that changes with risk.
+- **Session alerts** — a local notification when a prompt finishes or the agent asks for an approval or an answer; silenced for the conversation already on screen.
 - **Model switching** — pick the model and effort level from the session header.
 - **Stays paired** — the token renews itself before it expires, so you are not walking back to the PC every month.
 - **Self-update** — checks GitHub Releases, downloads the new APK, and hands it to Android's installer.
 - **App lock** — biometrics or the device passcode on launch and after leaving the foreground; switch it off in Settings.
 - **Light, dark, or system** — follow the phone, or pin the deck to the morning or night palette; the choice survives launches.
-- **Mobile data first** — no port forwarding, no LAN mode, no same-Wi-Fi requirement.
+- **Mobile data first** — no port forwarding and no same-Wi-Fi requirement. A full LAN pairing link works too; see [Pair over the LAN](#pair-over-the-lan-optional).
 
 ## Install
 
@@ -41,7 +42,7 @@ OpenCode runs on your machine, which is exactly where you are not. This app is t
 2. Tap it. Android will ask you to allow installs from the browser or file manager.
 3. Open **OpenCode Remote** and pair (below).
 
-The APK is release-signed, so a newer build installs over an older one. The tag and asset name carry the Android `versionCode` (`v1.1.2-6` → `opencode-remote-1.1.2-6.apk`); that code always increases.
+The APK is release-signed, so a newer build installs over an older one. The tag and asset name carry the Android `versionCode` (`v1.1.3-7` → `opencode-remote-1.1.3-7.apk`); that code always increases.
 
 ## Pair
 
@@ -66,7 +67,37 @@ To re-pair or unpair later, open **Settings** from the home screen: **Re-pair th
 > Pairing codes are **single-use** and expire after **five minutes**. Do not open the link on the PC first: any visit spends the code, and the phone will report `Pairing link expired or already used`. If that happens, run `opencode pair --remote --yes` again for a fresh code.
 
 > [!NOTE]
-> The `http://127.0.0.1:<port>/auth/connect/…` line only works on the PC. The phone must use the `https://<random>.opentunnel.xyz` link. The app filters loopback addresses automatically, and the first public URL that answers wins.
+> The `http://127.0.0.1:<port>/auth/connect/…` line only works on the PC. With the default tunnel, the phone must use the `https://<random>.opentunnel.xyz` link. The app filters loopback addresses automatically, and the first reachable non-loopback URL wins. For a LAN link, use the PC's LAN address instead.
+
+### Pair over the LAN (optional)
+
+The tunnel is the default. If the phone and PC share a Wi-Fi network and you would rather not expose a public URL, mint a LAN link instead:
+
+1. Bind the server to the LAN and restart it:
+   ```bash
+   opencode service set hostname 0.0.0.0
+   opencode service restart
+   ```
+2. Read the port from the status line:
+   ```bash
+   opencode service status
+   ```
+3. Mint the pairing link with the PC's LAN address and that port:
+   ```bash
+   opencode pair --url http://<pc-lan-ip>:<port>
+   ```
+4. Scan the QR or paste the **full** link. A bare `host:port` has no one-time code; the app needs the `/auth/connect/<code>` tail.
+
+For example, if `opencode service status` prints `http://127.0.0.1:45278` and the PC is `192.168.1.41`, run `opencode pair --url http://192.168.1.41:45278`.
+
+`192.168.1.41:8978` is the Expo dev server, not OpenCode. Use the port from `opencode service status`; it can change when the service restarts.
+
+> [!WARNING]
+> LAN pairing is plain HTTP: the app permits cleartext so a release build can reach the server, and the pairing token and API traffic are unencrypted on the network. Use the HTTPS tunnel on untrusted Wi-Fi. Bind back to loopback when you are done:
+> ```bash
+> opencode service set hostname 127.0.0.1
+> opencode service restart
+> ```
 
 <p align="center">
   <img src="docs/screenshots/setup.png" width="300" alt="Pairing screen with a paste-link field" />
@@ -93,7 +124,7 @@ OpenCode server on the PC
    └─ permission requests   ← the safety boundary
 ```
 
-No custom bridge: the app consumes OpenCode's own HTTP API and its SSE stream (`GET /api/event`), through the official tunnel. Pairing is the official one-time code exchange. Before the token expires, the app mints a fresh one through the same API — the server's password is never stored on the phone.
+No custom bridge: the app consumes OpenCode's own HTTP API and its SSE stream (`GET /api/event`), through the official tunnel or directly over the LAN. Pairing is the official one-time code exchange. Before the token expires, the app mints a fresh one through the same API — the server's password is never stored on the phone.
 
 ## Requirements
 
@@ -136,7 +167,7 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\opencode\plugins" 
 Copy-Item -Recurse .\plugins\rc-dot "$env:USERPROFILE\.config\opencode\plugins\"
 ```
 
-Restart OpenCode. See [`plugins/rc-dot/README.md`](plugins/rc-dot/README.md) for how detection works and how to change the port or allow-list.
+Restart OpenCode. See [`plugins/rc-dot/README.md`](plugins/rc-dot/README.md) for how the port is discovered and how to change the allow-list.
 
 ## Security
 
@@ -147,7 +178,8 @@ A remote prompt runs code on the PC as your user. **Approvals are the entire saf
 - Run OpenCode as a normal user, not as Administrator.
 - The pairing token lives in Android SecureStore. The web preview falls back to `localStorage` for development only.
 - The app locks behind device authentication, but that protects the phone, not a compromised PC.
-- Turn remote access off when you are done: `opencode service set remote false`.
+- LAN pairing is plain HTTP. The app permits cleartext so a release build can reach the server, but anyone who can intercept the LAN traffic can read the pairing token. Use the tunnel on untrusted networks.
+- Turn remote access off when you are done: `opencode service set remote false`. If you enabled LAN pairing, also run `opencode service set hostname 127.0.0.1` and `opencode service restart`.
 
 ## Troubleshooting
 
@@ -155,6 +187,9 @@ A remote prompt runs code on the PC as your user. **Approvals are the entire saf
 | --- | --- | --- |
 | `Pairing link expired or already used` | The one-time code was spent or passed five minutes | Run `opencode pair --remote --yes` again and scan the new QR. Do not open the link on the PC first. |
 | `Pairing failed: …` | The app tried each public URL and shows why each one failed | Check that the phone has internet and the tunnel is up. Try mobile data if Wi-Fi blocks the tunnel. |
+| `That is not a pairing link…`, or you pasted `192.168.1.41:8978` | A bare address has no one-time code, and `8978` is the Expo dev server, not OpenCode | Paste the full `/auth/connect/<code>` link from `opencode pair`. For LAN, mint it with `--url` and the OpenCode port from `opencode service status`. |
+| `CLEARTEXT communication … not permitted` | The installed APK predates LAN support and Android blocked plain HTTP | Update to `v1.1.3-7` or newer, or use the HTTPS tunnel. |
+| `Cannot reach https://…opentunnel.xyz` | The phone could not open the tunnel URL | Check phone internet and DNS, then retry with a fresh code. If the same URL returns HTTP 200 from the PC, the tunnel itself is healthy. |
 | `PC unreachable` | The tunnel closed, the PC slept, or OpenCode stopped | Wake the PC, confirm OpenCode is running, re-run the pair command if the tunnel is gone. |
 | The QR will not scan | Camera permission or a screen reflection | Tap **Enter link manually** and paste the public `https://…` link. |
 | An old build cannot pair after pasting the whole terminal block | Fixed in **1.1.1**: earlier builds could pick the PC-only `127.0.0.1` URL | Update from [Releases](https://github.com/yassine808/opencode-remote-control/releases/latest). |
@@ -187,7 +222,7 @@ TO-DO.md             backlog
 
 ## Status
 
-A personal, Android-only v1. iOS, LAN mode, and push notifications are not implemented; see [`TO-DO.md`](TO-DO.md) and [`PLAN.md`](PLAN.md).
+A personal, Android-only v1. iOS and reliable background push are not implemented; session alerts are local and run while the app's JS is alive. LAN pairing works with a full link when the server is bound to the LAN. See [`TO-DO.md`](TO-DO.md) and [`PLAN.md`](PLAN.md).
 
 ## License
 
