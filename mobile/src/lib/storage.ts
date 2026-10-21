@@ -189,12 +189,15 @@ export interface AppPreferences {
   requireUnlock: boolean;
   /** Check GitHub Releases once when the launcher opens. */
   autoCheckUpdates: boolean;
+  /** Native only: alert when a prompt ends or the agent needs input. */
+  notifications: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
   appearance: 'system',
   requireUnlock: true,
   autoCheckUpdates: true,
+  notifications: true,
 };
 
 const PREFERENCES_KEY = 'ocrc.preferences.v1';
@@ -219,6 +222,10 @@ export async function loadPreferences(): Promise<AppPreferences> {
         typeof parsed.autoCheckUpdates === 'boolean'
           ? parsed.autoCheckUpdates
           : DEFAULT_PREFERENCES.autoCheckUpdates,
+      notifications:
+        typeof parsed.notifications === 'boolean'
+          ? parsed.notifications
+          : DEFAULT_PREFERENCES.notifications,
     };
   } catch {
     return DEFAULT_PREFERENCES;

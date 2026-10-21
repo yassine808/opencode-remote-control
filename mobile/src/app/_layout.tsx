@@ -20,6 +20,7 @@ import { StatusBar } from 'react-native';
 import { AppLock } from '@/components/app-lock';
 import { useTheme } from '@/hooks/use-theme';
 import { ConnectionProvider } from '@/lib/connection';
+import { NotificationsProvider } from '@/lib/notifications';
 import { PreferencesProvider, usePreferences } from '@/lib/preferences';
 
 // Keep the splash up until the faces and the stored appearance are ready — an
@@ -76,15 +77,17 @@ function AppShell({ fontsLoaded }: Readonly<{ fontsLoaded: boolean }>) {
     <ThemeProvider value={navTheme}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <ConnectionProvider>
-        <AppLock>
-          {/* Each screen draws its own header so title, status and actions sit together. */}
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: theme.canvas },
-            }}
-          />
-        </AppLock>
+        <NotificationsProvider>
+          <AppLock>
+            {/* Each screen draws its own header so title, status and actions sit together. */}
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: theme.canvas },
+              }}
+            />
+          </AppLock>
+        </NotificationsProvider>
       </ConnectionProvider>
     </ThemeProvider>
   );

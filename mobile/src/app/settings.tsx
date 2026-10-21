@@ -20,6 +20,7 @@ import { Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { confirmAction } from '@/lib/confirm';
 import { useConnection } from '@/lib/connection';
+import { useNotificationPermission } from '@/lib/notifications';
 import { usePreferences } from '@/lib/preferences';
 import {
   clearPinnedSessions,
@@ -246,6 +247,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { preferences, update } = usePreferences();
   const { connection, disconnect } = useConnection();
+  const notificationPermission = useNotificationPermission();
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [history, setHistory] = useState({ recent: 0, pinned: 0 });
@@ -343,6 +345,8 @@ export default function SettingsScreen() {
 
   const version = `${installedVersion()} (${installedVersionCode()})`;
   const native = Platform.OS !== 'web';
+  const alertsBlocked =
+    native && preferences.notifications && notificationPermission.permission === 'denied';
 
   return (
     <ThemedView style={styles.screen}>
@@ -401,6 +405,30 @@ export default function SettingsScreen() {
                 No screen lock is set up on this device, so the gate has nothing to ask for.
               </ThemedText>
             </View>
+          ) : null}
+        </Section>
+
+        <Section title="Alerts">
+          <SwitchRow
+            label="Session alerts"
+            hint={
+              native
+                ? 'Notify when a prompt finishes or the agent needs an answer.'
+                : 'Available in the Android app.'
+            }
+            value={preferences.notifications}
+            disabled={!native}
+            onValueChange={(notifications) => {
+              void save({ notifications });
+              if (notifications) void notificationPermission.request();
+            }}
+          />
+          {alertsBlocked ? (
+            <NavRow
+              label="Open notification settings"
+              hint="Android is blocking alerts for this app."
+              onPress={() => void Linking.openSettings().catch(() => {})}
+            />
           ) : null}
         </Section>
 
