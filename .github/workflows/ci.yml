@@ -58,10 +58,13 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      # Lint needs the platform binary installed by unrs-resolver's postinstall,
-      # so this job deliberately does not use --ignore-scripts.
+      # Install without lifecycle scripts; the one script lint needs is run
+      # explicitly below, so no dependency gets to execute arbitrary code.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Link the resolver native binary
+        run: node node_modules/unrs-resolver/postinstall.js
 
       - name: Lint
         run: npm run lint
@@ -87,7 +90,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Check SDK dependency alignment
-        run: npx --yes expo-doctor@1.21.5
+        run: ./node_modules/.bin/expo-doctor
 
   web-build:
     name: Web build
@@ -110,7 +113,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Export the web bundle
-        run: npx expo export --platform web
+        run: ./node_modules/.bin/expo export --platform web
 
   android-prebuild:
     name: Android prebuild
@@ -133,7 +136,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Generate the Android project
-        run: npx expo prebuild --platform android --no-install
+        run: ./node_modules/.bin/expo prebuild --platform android --no-install
 
       - name: Confirm the release project exists
         run: |
@@ -149,7 +152,7 @@ jobs:
 
       - name: Download actionlint
         run: |
-          curl -fsSL -o actionlint.tar.gz \
+          curl -fsSL --proto '=https' --tlsv1.2 -o actionlint.tar.gz \
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           tar xzf actionlint.tar.gz actionlint
 
