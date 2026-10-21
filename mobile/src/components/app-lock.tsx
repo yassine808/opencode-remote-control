@@ -2,7 +2,8 @@
  * App lock — the phone is the key to a machine that runs code. The gate
  * covers everything until device authentication succeeds: biometrics when
  * enrolled, the device PIN/passcode otherwise. It locks on cold start and
- * whenever the app leaves the foreground.
+ * whenever the app leaves the foreground. Settings can turn the gate off;
+ * that is a deliberate trade the operator makes, not the default.
  *
  * The screens keep running underneath — the connection stays warm — so
  * unlocking lands on live state rather than a cold reload.
@@ -16,16 +17,23 @@ import { BrandWordmark, WORDMARK_FULL } from '@/components/brand';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
+import { usePreferences } from '@/lib/preferences';
 
 export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
   const theme = useTheme();
+  const { preferences } = usePreferences();
   // Browsers have no device-auth prompt to show; the web preview opens ungated.
-  const [locked, setLocked] = useState(Platform.OS !== 'web');
+  const gate = Platform.OS !== 'web' && preferences.requireUnlock;
+  const [armed, setArmed] = useState(gate);
   const [busy, setBusy] = useState(false);
   /** The device has nothing to authenticate with at all. */
   const [ungated, setUngated] = useState(false);
-  const lockedRef = useRef(true);
+  const lockedRef = useRef(gate);
   const prompting = useRef(false);
+  // The preference itself retires the cover; `armed` only records whether the
+  // last background leave asked for a prompt, so re-enabling the gate does not
+  // slap a cover over the settings screen the user is standing on.
+  const locked = armed && gate;
 
   const unlock = useCallback(async () => {
     if (prompting.current) return;
@@ -37,7 +45,7 @@ export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
       });
       if (result.success) {
         lockedRef.current = false;
-        setLocked(false);
+        setArmed(false);
       } else if (
         result.error === 'not_enrolled' ||
         result.error === 'passcode_not_set' ||
@@ -63,20 +71,24 @@ export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
     return () => clearTimeout(t);
   }, [locked, unlock]);
 
+  // Turning the gate off drops the cover immediately (derived above). Turning
+  // it back on arms it for the next background leave rather than covering the
+  // settings screen the user is standing on.
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
+        if (!preferences.requireUnlock) return;
         lockedRef.current = true;
-        setLocked(true);
-      } else if (state === 'active' && lockedRef.current) {
+        setArmed(true);
+      } else if (state === 'active' && lockedRef.current && preferences.requireUnlock) {
         // Returning to a locked app: prompt straight away. Guarded by
         // `prompting`, so the mount-time timer can never double-fire it.
         void unlock();
       }
     });
     return () => sub.remove();
-  }, [unlock]);
+  }, [unlock, preferences.requireUnlock]);
 
   return (
     <View style={styles.fill}>
@@ -103,7 +115,7 @@ export function AppLock({ children }: Readonly<{ children: ReactNode }>) {
               variant="secondary"
               onPress={() => {
                 lockedRef.current = false;
-                setLocked(false);
+                setArmed(false);
               }}
               style={styles.button}>
               Continue without a lock

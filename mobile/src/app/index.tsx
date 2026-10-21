@@ -23,21 +23,22 @@ import {
   RefreshControl,
   StyleSheet,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BrandWordmark } from '@/components/brand';
+import { BrandWordmark, WORDMARK_COMPACT } from '@/components/brand';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Glyph, PressableScale, StatusDot, useReduceMotion } from '@/components/ui';
-import { Fonts, Motion } from '@/constants/theme';
+import { Button, Glyph, PressableScale, StatusDot, useReduceMotion } from '@/components/ui';
+import { Fonts, Motion, Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { describeError } from '@/lib/api';
-import { confirmAction } from '@/lib/confirm';
 import { useConnection } from '@/lib/connection';
 import { runEventStream, type StreamStatus } from '@/lib/events';
 import { basename } from '@/lib/paths';
+import { usePreferences } from '@/lib/preferences';
 import {
   loadPinnedSessions,
   loadRecentSessions,
@@ -45,7 +46,7 @@ import {
   type PinnedSession,
   type RecentSession,
 } from '@/lib/storage';
-import type { SessionInfo } from '@/lib/types';
+import type { PermissionRequest, SessionInfo } from '@/lib/types';
 import {
   checkForUpdate,
   installedVersion,
@@ -62,6 +63,8 @@ const LIST_REFRESH_EVENTS = new Set([
   'session.inbox.delivered',
   'session.step.ended',
   'session.usage.updated',
+  'permission.asked',
+  'permission.replied',
 ]);
 
 // ---------- grouping ----------
@@ -103,9 +106,19 @@ function buildGroups(sessions: SessionInfo[], query: string): ProjectGroup[] {
   return groups;
 }
 
+type SessionState = 'attention' | 'working';
+
 type Row =
   | { kind: 'section'; key: string; title: string }
-  | { kind: 'project'; key: string; group: ProjectGroup; expanded: boolean; last: boolean }
+  | {
+      kind: 'project';
+      key: string;
+      group: ProjectGroup;
+      expanded: boolean;
+      last: boolean;
+      attentionCount: number;
+      runningCount: number;
+    }
   | {
       kind: 'session';
       key: string;
@@ -116,6 +129,8 @@ type Row =
       /** Nested rows indent under their project; top-level rows don't. */
       indent?: boolean;
       last: boolean;
+      /** Live state, surfaced as a word + dot rather than only a color. */
+      state?: SessionState;
     };
 
 // ---------- rows ----------
@@ -128,11 +143,15 @@ function ProjectRow({
   group,
   expanded,
   last,
+  attentionCount,
+  runningCount,
   onToggle,
 }: Readonly<{
   group: ProjectGroup;
   expanded: boolean;
   last: boolean;
+  attentionCount: number;
+  runningCount: number;
   onToggle: () => void;
 }>) {
   const theme = useTheme();
@@ -152,12 +171,26 @@ function ProjectRow({
     }).start();
   }, [expanded, reduce, rotation]);
 
+  const stateColor = attentionCount > 0 ? theme.caution : theme.running;
+  const stateLabel =
+    attentionCount > 0
+      ? `${attentionCount} waiting`
+      : runningCount > 0
+        ? 'Working'
+        : null;
+
   return (
     <View>
       <Pressable
         onPress={onToggle}
         accessibilityRole="button"
-        accessibilityLabel={`${group.name}, ${expanded ? 'expanded' : 'collapsed'}, ${group.sessions.length} sessions`}
+        accessibilityLabel={`${group.name}, ${expanded ? 'expanded' : 'collapsed'}, ${group.sessions.length} sessions${
+          attentionCount > 0
+            ? `, ${attentionCount} waiting for approval`
+            : runningCount > 0
+              ? ', working'
+              : ''
+        }`}
         style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.inkControl }]}>
         <Animated.View
           style={{
@@ -175,7 +208,14 @@ function ProjectRow({
         <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
           {group.name}
         </ThemedText>
-        {!expanded && group.sessions.length > 0 ? (
+        {stateLabel ? (
+          <View style={styles.state}>
+            <StatusDot color={stateColor} size={7} />
+            <ThemedText type="caption" weight="medium" style={{ color: stateColor }}>
+              {stateLabel}
+            </ThemedText>
+          </View>
+        ) : !expanded && group.sessions.length > 0 ? (
           <ThemedText type="caption" style={{ color: theme.inkFaint }}>
             {group.sessions.length}
           </ThemedText>
@@ -197,63 +237,9 @@ function SectionHead({ title }: Readonly<{ title: string }>) {
 }
 
 /**
- * A running session's title, typed out like someone is writing it: types,
- * holds, erases, repeats — with a blinking caret. Idle sessions render the
- * plain title.
- */
-function TypingTitle({ title, style }: Readonly<{ title: string; style?: any }>) {
-  const reduce = useReduceMotion();
-  const theme = useTheme();
-  const [count, setCount] = useState(0);
-  const [caret, setCaret] = useState(true);
-
-  useEffect(() => {
-    if (reduce) {
-      setCount(title.length);
-      return;
-    }
-    let n = 0;
-    let dir: 1 | -1 = 1;
-    let hold = 0;
-    setCount(0);
-    const t = setInterval(() => {
-      if (hold > 0) {
-        hold -= 1;
-        return;
-      }
-      n += dir;
-      if (n >= title.length) {
-        n = title.length;
-        dir = -1;
-        hold = 12; // ~1s at the end of the line
-      } else if (n <= 0) {
-        n = 0;
-        dir = 1;
-        hold = 4;
-      }
-      setCount(n);
-    }, 80);
-    return () => clearInterval(t);
-  }, [title, reduce]);
-
-  useEffect(() => {
-    const t = setInterval(() => setCaret((c) => !c), 450);
-    return () => clearInterval(t);
-  }, []);
-
-  return (
-    <ThemedText type="body" numberOfLines={1} style={style}>
-      {title.slice(0, count)}
-      <ThemedText type="body" style={{ color: theme.clay, opacity: caret ? 1 : 0 }}>
-        ▌
-      </ThemedText>
-    </ThemedText>
-  );
-}
-
-/**
- * One conversation row. Nested rows lean on the project row above for
- * context; Recent rows carry the project as a quiet caption because their
+ * One conversation row. The title stays still; live state is a word plus a
+ * dot, so "needs you" survives a glance, a screen reader, and color blindness.
+ * Recent rows carry the project as a quiet second line because their
  * neighbours come from different projects.
  */
 function SessionRow({
@@ -262,22 +248,23 @@ function SessionRow({
   indent,
   pinned,
   last,
-  running,
+  state,
   onPress,
   onTogglePin,
 }: Readonly<{
   title: string;
-  /** the agent is working in this session right now */
-  running?: boolean;
   hint?: string;
   indent?: boolean;
   /** Pinned rows carry a filled pin; tapping the glyph flips the state. */
   pinned?: boolean;
   last: boolean;
+  state?: SessionState;
   onPress: () => void;
   onTogglePin?: () => void;
 }>) {
   const theme = useTheme();
+  const stateColor = state === 'attention' ? theme.caution : theme.running;
+
   return (
     <View>
       {/* The pin is a sibling of the row press, never a button inside one —
@@ -286,23 +273,31 @@ function SessionRow({
         <Pressable
           onPress={onPress}
           accessibilityRole="button"
-          accessibilityLabel={hint ? `${title}, ${hint}` : title}
+          accessibilityLabel={`${title}${hint ? `, ${hint}` : ''}${
+            state === 'attention' ? ', needs you' : state === 'working' ? ', working' : ''
+          }`}
           style={({ pressed }) => [
             styles.sessionPress,
             indent && styles.sessionRow,
             pressed && { backgroundColor: theme.inkControl },
           ]}>
-          {running ? (
-            <TypingTitle title={title} style={styles.rowText} />
-          ) : (
-            <ThemedText type="body" numberOfLines={1} style={styles.rowText}>
+          <View style={styles.sessionText}>
+            <ThemedText type="body" numberOfLines={1}>
               {title}
             </ThemedText>
-          )}
-          {hint ? (
-            <ThemedText type="caption" numberOfLines={1} style={[styles.rowHint, { color: theme.inkFaint }]}>
-              {hint}
-            </ThemedText>
+            {hint ? (
+              <ThemedText type="caption" numberOfLines={1} themeColor="inkFaint">
+                {hint}
+              </ThemedText>
+            ) : null}
+          </View>
+          {state ? (
+            <View style={styles.state}>
+              <StatusDot color={stateColor} size={7} />
+              <ThemedText type="caption" weight="medium" style={{ color: stateColor }}>
+                {state === 'attention' ? 'Needs you' : 'Working'}
+              </ThemedText>
+            </View>
           ) : null}
           <Glyph name="chevron-forward" size={12} color={theme.inkFaint} />
         </Pressable>
@@ -345,12 +340,137 @@ function FooterLink() {
   );
 }
 
+// ---------- live surfaces ----------
+
+/** The screen's one ambient motion: an approval is waiting on a human. */
+function PulseDot({ color }: Readonly<{ color: string }>) {
+  const reduce = useReduceMotion();
+  const [opacity] = useState(() => new Animated.Value(1));
+
+  useEffect(() => {
+    if (reduce) {
+      opacity.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.35,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity, reduce]);
+
+  return (
+    <Animated.View
+      style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity }}
+    />
+  );
+}
+
+function AttentionBanner({
+  title,
+  more,
+  onPress,
+}: Readonly<{ title: string; more: number; onPress: () => void }>) {
+  const theme = useTheme();
+  return (
+    <PressableScale
+      onPress={onPress}
+      scaleTo={0.99}
+      accessibilityLabel={`${title} needs approval${more > 0 ? `, ${more} more waiting` : ''}. Open session.`}
+      style={[styles.banner, { backgroundColor: theme.cautionSoft }]}>
+      <PulseDot color={theme.caution} />
+      <View style={styles.bannerBody}>
+        <ThemedText type="body" weight="semibold" numberOfLines={1}>
+          {title}
+        </ThemedText>
+        <ThemedText type="caption" style={{ color: theme.caution }}>
+          {more > 0 ? `Needs approval · ${more} more waiting` : 'Needs approval'}
+        </ThemedText>
+      </View>
+      <Glyph name="chevron-forward" size={15} color={theme.caution} />
+    </PressableScale>
+  );
+}
+
+function NoticeBanner({
+  tone,
+  icon,
+  text,
+  actionLabel,
+  onPress,
+}: Readonly<{
+  tone: 'danger' | 'accent';
+  icon: 'wifi-alert' | 'cellphone-arrow-down';
+  text: string;
+  actionLabel: string;
+  onPress: () => void;
+}>) {
+  const theme = useTheme();
+  const foreground = tone === 'danger' ? theme.negative : theme.accent;
+  return (
+    <PressableScale
+      onPress={onPress}
+      scaleTo={0.99}
+      accessibilityLabel={`${text}. ${actionLabel}.`}
+      style={[
+        styles.banner,
+        { backgroundColor: tone === 'danger' ? theme.dangerSoft : theme.accentSoft },
+      ]}>
+      <Glyph set="mci" name={icon} size={17} color={foreground} />
+      <ThemedText
+        type="caption"
+        numberOfLines={2}
+        style={[styles.bannerText, { color: tone === 'danger' ? theme.negative : theme.ink }]}>
+        {text}
+      </ThemedText>
+      <ThemedText type="caption" weight="semibold" style={{ color: foreground }}>
+        {actionLabel}
+      </ThemedText>
+    </PressableScale>
+  );
+}
+
+function LoadError({
+  message,
+  busy,
+  onRetry,
+}: Readonly<{ message: string; busy: boolean; onRetry: () => void }>) {
+  const theme = useTheme();
+  return (
+    <View style={styles.fail}>
+      <Glyph set="mci" name="wifi-alert" size={30} color={theme.inkFaint} />
+      <ThemedText type="headline">Can&apos;t reach your PC</ThemedText>
+      <ThemedText type="callout" themeColor="inkMuted" style={styles.failText}>
+        {message}
+      </ThemedText>
+      <Button variant="secondary" busy={busy} onPress={onRetry} style={styles.failButton}>
+        Try Again
+      </Button>
+    </View>
+  );
+}
+
 // ---------- screen ----------
 
 export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { ready, api, disconnect } = useConnection();
+  const { width } = useWindowDimensions();
+  const { ready, api } = useConnection();
+  const { preferences } = usePreferences();
 
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -366,25 +486,59 @@ export default function HomeScreen() {
   const [pinned, setPinned] = useState<PinnedSession[]>([]);
   /** sessions whose agent is working right now */
   const [activeIDs, setActiveIDs] = useState<Set<string>>(() => new Set());
+  /** Approval gates waiting on the user, across every project. */
+  const [pending, setPending] = useState<PermissionRequest[]>([]);
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Guards against an older, slower load overwriting a newer one. */
+  const loadSeq = useRef(0);
 
   const load = useCallback(
     async (opts: { silent?: boolean } = {}) => {
       if (!api) return;
+      const client = api;
+      const seq = ++loadSeq.current;
       if (!opts.silent) setRefreshing(true);
       try {
-        void api
-          .activeSessions()
-          .then((act) => setActiveIDs(new Set(Object.keys(act.data ?? {}))))
-          .catch(() => {});
-        const list = await api.sessions(50);
+        const [list, active] = await Promise.all([
+          client.sessions(50),
+          client.activeSessions().catch(() => null),
+        ]);
+        if (seq !== loadSeq.current) return;
+
         setSessions(
           [...list.data].sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0)),
         );
+        if (active) setActiveIDs(new Set(Object.keys(active.data ?? {})));
         setError(null);
+
+        // A session with a pending permission request is the one thing on this
+        // screen that cannot wait. Ask each project once, in parallel; a project
+        // that is slow or gone must not blank out the others.
+        const directories = [
+          ...new Set(
+            list.data
+              .map((session) => session.location?.directory)
+              .filter((directory): directory is string => !!directory),
+          ),
+        ].slice(0, 12);
+        const results = await Promise.allSettled(
+          directories.map((directory) => client.permissionRequestsAt(directory)),
+        );
+        if (seq !== loadSeq.current) return;
+        if (results.some((result) => result.status === 'fulfilled')) {
+          setPending(
+            results.flatMap((result) =>
+              result.status === 'fulfilled' ? result.value.data : [],
+            ),
+          );
+        }
       } catch (err) {
-        setError(describeError(err));
+        if (seq === loadSeq.current) {
+          setError(describeError(err));
+          // A disconnected list cannot prove an approval is still waiting.
+          setPending([]);
+        }
       } finally {
         if (!opts.silent) setRefreshing(false);
       }
@@ -482,6 +636,7 @@ export default function HomeScreen() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
+    if (!preferences.autoCheckUpdates) return;
     // The installed versionCode is the comparand; the web preview has none,
     // so it skips the check entirely.
     if (installedVersionCode() <= 0) return;
@@ -494,7 +649,11 @@ export default function HomeScreen() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [preferences.autoCheckUpdates]);
+
+  // The preference is the display gate too: switching checks off hides any
+  // result already fetched, without another state write in an effect.
+  const visibleUpdate = preferences.autoCheckUpdates ? updateInfo : null;
 
   const togglePin = useCallback(
     async (entry: { id: string; title?: string | null; directory?: string | null }) => {
@@ -526,8 +685,38 @@ export default function HomeScreen() {
 
   const pinnedIDs = useMemo(() => new Set(pinned.map((p) => p.id)), [pinned]);
 
+  const pendingBySession = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const request of pending) {
+      map.set(request.sessionID, (map.get(request.sessionID) ?? 0) + 1);
+    }
+    return map;
+  }, [pending]);
+
+  const attentionSessions = useMemo(
+    () => (sessions ?? []).filter((session) => pendingBySession.has(session.id)),
+    [pendingBySession, sessions],
+  );
+
+  const attentionIDs = useMemo(
+    () => new Set(attentionSessions.map((session) => session.id)),
+    [attentionSessions],
+  );
+
+  // A blocked session is not "working" even if the server still reports it as
+  // active — the human gate outranks the spinner.
+  const workingIDs = useMemo(() => {
+    const next = new Set<string>();
+    for (const id of activeIDs) {
+      if (!attentionIDs.has(id)) next.add(id);
+    }
+    return next;
+  }, [activeIDs, attentionIDs]);
+
   const rows = useMemo(() => {
     const out: Row[] = [];
+    const stateOf = (id: string): SessionState | undefined =>
+      attentionIDs.has(id) ? 'attention' : workingIDs.has(id) ? 'working' : undefined;
 
     // Pinned conversations lead — a deliberate choice outranks recency; a
     // search narrows the list to matches only.
@@ -542,6 +731,7 @@ export default function HomeScreen() {
           id: entry.id,
           title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
           hint: basename(directory) || undefined,
+          state: stateOf(entry.id),
           last: i === pinned.length - 1,
         });
       });
@@ -561,6 +751,7 @@ export default function HomeScreen() {
           id: entry.id,
           title: fresh?.title?.trim() || entry.title?.trim() || 'Untitled session',
           hint: basename(directory) || undefined,
+          state: stateOf(entry.id),
           last: i === unpinnedRecents.length - 1,
         });
       });
@@ -571,7 +762,17 @@ export default function HomeScreen() {
       for (const group of groups) {
         const expanded = isExpanded(group);
         const members = expanded ? group.sessions.length : 0;
-        out.push({ kind: 'project', key: `p:${group.id}`, group, expanded, last: members === 0 });
+        const attentionCount = group.sessions.filter((s) => attentionIDs.has(s.id)).length;
+        const runningCount = group.sessions.filter((s) => workingIDs.has(s.id)).length;
+        out.push({
+          kind: 'project',
+          key: `p:${group.id}`,
+          group,
+          expanded,
+          last: members === 0,
+          attentionCount,
+          runningCount,
+        });
         if (expanded) {
           group.sessions.forEach((session, i) => {
             out.push({
@@ -580,6 +781,7 @@ export default function HomeScreen() {
               id: session.id,
               title: session.title?.trim() || 'Untitled session',
               indent: true,
+              state: stateOf(session.id),
               last: i === group.sessions.length - 1,
             });
           });
@@ -587,17 +789,17 @@ export default function HomeScreen() {
       }
     }
     return out;
-  }, [groups, isExpanded, pinned, pinnedIDs, recents, searching, sessionByID]);
-
-  const unpair = useCallback(async () => {
-    const ok = await confirmAction({
-      title: 'Unpair this device?',
-      message: 'You will need to pair with your PC again to see your sessions.',
-      confirmLabel: 'Unpair',
-      destructive: true,
-    });
-    if (ok) await disconnect();
-  }, [disconnect]);
+  }, [
+    attentionIDs,
+    groups,
+    isExpanded,
+    pinned,
+    pinnedIDs,
+    recents,
+    searching,
+    sessionByID,
+    workingIDs,
+  ]);
 
   if (!ready) return <ThemedView style={styles.screen} />;
   if (!api) return <Redirect href="/setup" />;
@@ -608,88 +810,108 @@ export default function HomeScreen() {
     disconnected: theme.negative,
   }[streamStatus];
 
-  const dotLabel = {
-    connected: 'PC connected',
-    connecting: 'Checking',
-    disconnected: 'PC unreachable',
+  const statusLabel = {
+    connected: 'Connected',
+    connecting: 'Connecting to your PC',
+    disconnected: "Can't reach your PC",
   }[streamStatus];
 
-  const errorRow = error ? (
-    <View style={styles.errorRow}>
-      <Glyph set="mci" name="wifi-alert" size={17} color={theme.inkMuted} />
-      <ThemedText type="body" style={[styles.errorText, { color: theme.inkMuted }]}>
-        {error}
+  const workingCount = workingIDs.size;
+  const statusDetail =
+    streamStatus === 'connected' && workingCount > 0 ? ` · ${workingCount} working` : '';
+  const leadAttention = attentionSessions[0] ?? null;
+
+  const empty: ReactElement = searching ? (
+    <View style={styles.emptySearch}>
+      <ThemedText type="body" themeColor="inkMuted">
+        No matches for “{search.trim()}”
+      </ThemedText>
+      <PressableScale
+        onPress={() => setSearch('')}
+        accessibilityLabel="Clear search"
+        style={styles.clearSearch}>
+        <ThemedText type="caption" style={{ color: theme.accent }}>
+          Clear search
+        </ThemedText>
+      </PressableScale>
+    </View>
+  ) : (
+    <View style={styles.empty}>
+      <Glyph name="terminal-outline" size={28} color={theme.inkFaint} />
+      <ThemedText type="headline">No sessions yet</ThemedText>
+      <ThemedText type="callout" themeColor="inkMuted" style={styles.emptyText}>
+        Start one in OpenCode on your PC — it shows up here.
       </ThemedText>
     </View>
-  ) : null;
-
-  const updateRow = updateInfo ? (
-    <PressableScale
-      onPress={() => router.push('/update')}
-      accessibilityLabel={`Update available: version ${updateInfo.version}`}
-      style={styles.errorRow}>
-      <Glyph set="mci" name="cellphone-arrow-down" size={17} color={theme.accent} />
-      <ThemedText type="body" style={styles.errorText}>
-        {`Version ${updateInfo.version} is available`}
-      </ThemedText>
-      <Glyph name="chevron-forward" size={14} color={theme.inkFaint} />
-    </PressableScale>
-  ) : null;
-
-  let header: ReactElement | undefined;
-  if (error || updateRow) {
-    header = (
-      <View>
-        {errorRow}
-        {updateRow}
-      </View>
-    );
-  }
-
-  let empty: ReactElement | undefined;
-  if (!error) {
-    empty = searching ? (
-      <ThemedText type="body" style={[styles.emptyText, { color: theme.inkMuted }]}>
-        No matching projects or sessions
-      </ThemedText>
-    ) : (
-      <View style={styles.empty}>
-        <ThemedText type="body" style={{ color: theme.inkMuted }}>
-          No sessions yet
-        </ThemedText>
-        <ThemedText type="caption" style={{ color: theme.inkFaint }}>
-          Start one in OpenCode on your PC — it shows up here.
-        </ThemedText>
-      </View>
-    );
-  }
+  );
 
   return (
     <ThemedView style={styles.screen}>
-      {/* nav — the scanner on the left, the wordmark, the status dot on the right */}
+      {/* nav — wordmark left, settings right, connection state named below */}
       <View style={{ paddingTop: insets.top }}>
         <View style={styles.navBar}>
-          <BrandWordmark height={15} color={theme.ink} />
-        </View>
-        <View style={[styles.scanSlot, { top: insets.top }]}>
+          {/* The full wordmark is 270pt wide; on a narrow phone the compact
+              mark keeps the header on one line without shrinking the target. */}
+          <BrandWordmark
+            height={15}
+            text={width < 360 ? WORDMARK_COMPACT : undefined}
+            color={theme.ink}
+          />
           <PressableScale
-            onPress={() => router.push({ pathname: '/setup', params: { back: '1' } })}
-            accessibilityLabel="Scan QR code"
-            accessibilityHint="Pair or re-pair with your PC"
-            scaleTo={0.9}>
-            <Glyph set="mci" name="qrcode-scan" size={18} color={theme.inkMuted} />
+            onPress={() => router.push('/settings')}
+            accessibilityLabel="Settings"
+            scaleTo={0.9}
+            style={styles.navAction}>
+            <Glyph name="settings-outline" size={19} color={theme.inkMuted} />
           </PressableScale>
         </View>
-        <View style={[styles.dot, { top: insets.top }]}>
-          <PressableScale
-            onPress={() => void load({ silent: true })}
-            onLongPress={() => void unpair()}
-            accessibilityLabel={dotLabel}
-            accessibilityHint="Long press to unpair">
-            <StatusDot color={dotColor} size={10} />
-          </PressableScale>
-        </View>
+        <PressableScale
+          onPress={() => void load()}
+          scaleTo={0.99}
+          hitSlop={8}
+          accessibilityLabel={`${statusLabel}${
+            workingCount > 0 ? `, ${workingCount} working` : ''
+          }. Tap to refresh.`}
+          style={styles.statusStrip}>
+          <StatusDot color={dotColor} size={7} />
+          <ThemedText
+            type="caption"
+            themeColor={streamStatus === 'disconnected' ? 'negative' : 'inkMuted'}>
+            {statusLabel}
+            {statusDetail}
+          </ThemedText>
+          <View style={styles.statusSpacer} />
+          <Glyph name="refresh" size={12} color={theme.inkFaint} />
+        </PressableScale>
       </View>
+
+      {leadAttention && sessions !== null ? (
+        <AttentionBanner
+          title={leadAttention.title?.trim() || 'Untitled session'}
+          more={attentionSessions.length - 1}
+          onPress={() =>
+            router.push({ pathname: '/session/[id]', params: { id: leadAttention.id } })
+          }
+        />
+      ) : null}
+      {error && sessions !== null ? (
+        <NoticeBanner
+          tone="danger"
+          icon="wifi-alert"
+          text={error}
+          actionLabel="Retry"
+          onPress={() => void load()}
+        />
+      ) : null}
+      {visibleUpdate ? (
+        <NoticeBanner
+          tone="accent"
+          icon="cellphone-arrow-down"
+          text={`Version ${visibleUpdate.version} is available`}
+          actionLabel="Update"
+          onPress={() => router.push('/update')}
+        />
+      ) : null}
 
       {/* searchable — one field, debounced upstream by local filtering */}
       <View style={styles.searchWrap}>
@@ -727,10 +949,11 @@ export default function HomeScreen() {
             </ThemedText>
           </View>
         </View>
+      ) : sessions === null && error ? (
+        <LoadError message={error} busy={refreshing} onRetry={() => void load()} />
       ) : (
         <FlatList
           data={rows}
-          extraData={activeIDs}
           keyExtractor={(row) => row.key}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
@@ -745,7 +968,6 @@ export default function HomeScreen() {
               colors={[theme.accent]}
             />
           }
-          ListHeaderComponent={header}
           ListFooterComponent={<FooterLink />}
           renderItem={({ item }) => {
             if (item.kind === 'section') {
@@ -757,6 +979,8 @@ export default function HomeScreen() {
                   group={item.group}
                   expanded={item.expanded}
                   last={item.last}
+                  attentionCount={item.attentionCount}
+                  runningCount={item.runningCount}
                   onToggle={() =>
                     setToggled((t) => ({ ...t, [item.group.id]: !isExpanded(item.group) }))
                   }
@@ -769,7 +993,7 @@ export default function HomeScreen() {
                 hint={item.hint}
                 indent={item.indent}
                 pinned={pinnedIDs.has(item.id)}
-                running={activeIDs.has(item.id)}
+                state={item.state}
                 last={item.last}
                 onPress={() =>
                   router.push({ pathname: '/session/[id]', params: { id: item.id } })
@@ -793,10 +1017,24 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  navBar: { height: 44, alignItems: 'center', justifyContent: 'center' },
-  dot: { position: 'absolute', right: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  scanSlot: { position: 'absolute', left: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+  navBar: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingLeft: 16,
+    paddingRight: 6,
+  },
+  navAction: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  statusStrip: {
+    height: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+  },
+  statusSpacer: { flex: 1 },
+  searchWrap: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -816,14 +1054,27 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   centerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   listContent: { flexGrow: 1, width: '100%', maxWidth: 560, alignSelf: 'center' },
-  errorRow: {
+  banner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 16,
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: Radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  errorText: { flex: 1 },
+  bannerBody: { flex: 1, gap: 1 },
+  bannerText: { flex: 1 },
+  fail: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 32,
+  },
+  failText: { textAlign: 'center' },
+  failButton: { minWidth: 148, marginTop: 8 },
   footer: { alignItems: 'center', paddingTop: 24 },
   sectionHead: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 6 },
   row: {
@@ -841,12 +1092,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 16,
+    paddingVertical: 8,
   },
+  sessionText: { flex: 1, gap: 1 },
   pinButton: { justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 12 },
   sessionRow: { paddingLeft: 16 + 22 },
   rowText: { flex: 1 },
-  rowHint: { maxWidth: 160 },
+  state: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
-  empty: { paddingHorizontal: 16, paddingTop: 2, gap: 4 },
-  emptyText: { paddingHorizontal: 16, paddingTop: 2 },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 32,
+    paddingBottom: 32,
+  },
+  emptySearch: {
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 32,
+    paddingTop: 48,
+  },
+  clearSearch: { paddingHorizontal: 8, paddingVertical: 6 },
+  emptyText: { textAlign: 'center' },
 });

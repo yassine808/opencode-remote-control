@@ -15,21 +15,19 @@ import {
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { StatusBar, useColorScheme } from 'react-native';
+import { StatusBar } from 'react-native';
 
 import { AppLock } from '@/components/app-lock';
-import { Colors } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { ConnectionProvider } from '@/lib/connection';
+import { PreferencesProvider, usePreferences } from '@/lib/preferences';
 
-// Keep the splash up until the faces have loaded — SF-alike text rendering
-// with a system-font flash first is the one thing that reads as "not the app".
+// Keep the splash up until the faces and the stored appearance are ready — an
+// SF-alike font flash or a light-to-dark flip is the one thing that reads as
+// "not the app".
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const dark = colorScheme === 'dark';
-  const c = dark ? Colors.dark : Colors.light;
-
   // SF Pro / SF Mono aren't available on Android or the web; Inter and Roboto
   // Mono stand in, closest-free-face to each.
   const [fontsLoaded] = useFonts({
@@ -44,23 +42,35 @@ export default function RootLayout() {
     RobotoMono_600SemiBold,
   });
 
+  return (
+    <PreferencesProvider>
+      <AppShell fontsLoaded={fontsLoaded} />
+    </PreferencesProvider>
+  );
+}
+
+function AppShell({ fontsLoaded }: Readonly<{ fontsLoaded: boolean }>) {
+  const { ready, scheme } = usePreferences();
+  const theme = useTheme();
+  const dark = scheme === 'dark';
+
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
+    if (fontsLoaded && ready) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded, ready]);
 
   const navTheme = {
     ...(dark ? DarkTheme : DefaultTheme),
     colors: {
       ...(dark ? DarkTheme : DefaultTheme).colors,
-      background: c.canvas,
-      card: c.canvas,
-      text: c.ink,
-      border: c.hairline,
-      primary: c.accent,
+      background: theme.canvas,
+      card: theme.canvas,
+      text: theme.ink,
+      border: theme.hairline,
+      primary: theme.accent,
     },
   };
 
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded || !ready) return null;
 
   return (
     <ThemeProvider value={navTheme}>
@@ -71,7 +81,7 @@ export default function RootLayout() {
           <Stack
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: c.canvas },
+              contentStyle: { backgroundColor: theme.canvas },
             }}
           />
         </AppLock>

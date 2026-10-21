@@ -31,7 +31,8 @@ OpenCode runs on your machine, which is exactly where you are not. This app is t
 - **Model switching** — pick the model and effort level from the session header.
 - **Stays paired** — the token renews itself before it expires, so you are not walking back to the PC every month.
 - **Self-update** — checks GitHub Releases, downloads the new APK, and hands it to Android's installer.
-- **App lock** — biometrics or the device passcode on launch and after leaving the foreground.
+- **App lock** — biometrics or the device passcode on launch and after leaving the foreground; switch it off in Settings.
+- **Light, dark, or system** — follow the phone, or pin the deck to the morning or night palette; the choice survives launches.
 - **Mobile data first** — no port forwarding, no LAN mode, no same-Wi-Fi requirement.
 
 ## Install
@@ -59,6 +60,8 @@ On the phone:
 
 The app exchanges the single-use code for a token and stores it in Android SecureStore.
 
+To re-pair or unpair later, open **Settings** from the home screen: **Re-pair this device** scans a fresh QR code, and **Unpair this device** clears the token from the phone.
+
 > [!WARNING]
 > Pairing codes are **single-use** and expire after **five minutes**. Do not open the link on the PC first: any visit spends the code, and the phone will report `Pairing link expired or already used`. If that happens, run `opencode pair --remote --yes` again for a fresh code.
 
@@ -71,9 +74,9 @@ The app exchanges the single-use code for a token and stores it in Android Secur
 
 ## A look around
 
-| Sessions | Approvals |
-| --- | --- |
-| <img src="docs/screenshots/sessions.png" width="290" alt="Sessions grouped by project with running and approval badges" /> | <img src="docs/screenshots/approval.png" width="290" alt="Approval sheet for a shell command with allow, always, and reject" /> |
+| Sessions | Settings | Approvals |
+| --- | --- | --- |
+| <img src="docs/screenshots/sessions.png" width="250" alt="Sessions grouped by project, with a needs-approval banner, connection status, and pinned and recent rows" /> | <img src="docs/screenshots/settings.png" width="250" alt="Settings with appearance, app lock, connection, update, and local-data controls" /> | <img src="docs/screenshots/approval.png" width="250" alt="Approval sheet for a shell command with allow, always, and reject" /> |
 
 ## How it works
 

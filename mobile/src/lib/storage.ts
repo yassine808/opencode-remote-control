@@ -16,9 +16,30 @@ const KEY = 'ocrc.connection.v1';
 const webStorage =
   Platform.OS === 'web' && typeof localStorage !== 'undefined' ? localStorage : null;
 
+// One read/write path for every key, so native and web keep identical behavior.
+async function readRaw(key: string): Promise<string | null> {
+  return webStorage ? webStorage.getItem(key) : await SecureStore.getItemAsync(key);
+}
+
+async function writeRaw(key: string, raw: string): Promise<void> {
+  if (webStorage) {
+    webStorage.setItem(key, raw);
+    return;
+  }
+  await SecureStore.setItemAsync(key, raw);
+}
+
+async function removeRaw(key: string): Promise<void> {
+  if (webStorage) {
+    webStorage.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
+
 export async function loadConnection(): Promise<StoredConnection | null> {
   try {
-    const raw = webStorage ? webStorage.getItem(KEY) : await SecureStore.getItemAsync(KEY);
+    const raw = await readRaw(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredConnection;
     if (!parsed?.baseUrl || !parsed?.token) return null;
@@ -29,20 +50,11 @@ export async function loadConnection(): Promise<StoredConnection | null> {
 }
 
 export async function saveConnection(conn: StoredConnection): Promise<void> {
-  const raw = JSON.stringify(conn);
-  if (webStorage) {
-    webStorage.setItem(KEY, raw);
-    return;
-  }
-  await SecureStore.setItemAsync(KEY, raw);
+  await writeRaw(KEY, JSON.stringify(conn));
 }
 
 export async function clearConnection(): Promise<void> {
-  if (webStorage) {
-    webStorage.removeItem(KEY);
-    return;
-  }
-  await SecureStore.deleteItemAsync(KEY);
+  await removeRaw(KEY);
 }
 
 // ---------- recently opened conversations ----------
@@ -61,9 +73,7 @@ const RECENTS_MAX = 5;
 
 export async function loadRecentSessions(): Promise<RecentSession[]> {
   try {
-    const raw = webStorage
-      ? webStorage.getItem(RECENTS_KEY)
-      : await SecureStore.getItemAsync(RECENTS_KEY);
+    const raw = await readRaw(RECENTS_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -93,14 +103,17 @@ export async function rememberRecentSession(entry: {
       },
       ...previous.filter((r) => r.id !== entry.id),
     ].slice(0, RECENTS_MAX);
-    const raw = JSON.stringify(next);
-    if (webStorage) {
-      webStorage.setItem(RECENTS_KEY, raw);
-      return;
-    }
-    await SecureStore.setItemAsync(RECENTS_KEY, raw);
+    await writeRaw(RECENTS_KEY, JSON.stringify(next));
   } catch {
     // History is a convenience — never let it break opening a conversation.
+  }
+}
+
+export async function clearRecentSessions(): Promise<void> {
+  try {
+    await removeRaw(RECENTS_KEY);
+  } catch {
+    // History is a convenience — clearing it is best-effort.
   }
 }
 
@@ -119,9 +132,7 @@ const PINNED_KEY = 'ocrc.pinned.v1';
 
 export async function loadPinnedSessions(): Promise<PinnedSession[]> {
   try {
-    const raw = webStorage
-      ? webStorage.getItem(PINNED_KEY)
-      : await SecureStore.getItemAsync(PINNED_KEY);
+    const raw = await readRaw(PINNED_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -153,13 +164,67 @@ export async function togglePinnedSession(entry: {
           },
           ...previous,
         ];
-    const raw = JSON.stringify(next);
-    if (webStorage) {
-      webStorage.setItem(PINNED_KEY, raw);
-      return;
-    }
-    await SecureStore.setItemAsync(PINNED_KEY, raw);
+    await writeRaw(PINNED_KEY, JSON.stringify(next));
   } catch {
     // Pinning is a convenience — never let it break the launcher.
   }
+}
+
+export async function clearPinnedSessions(): Promise<void> {
+  try {
+    await removeRaw(PINNED_KEY);
+  } catch {
+    // Pinning is a convenience — clearing it is best-effort.
+  }
+}
+
+// ---------- app preferences ----------
+
+export type AppearancePreference = 'system' | 'light' | 'dark';
+
+export interface AppPreferences {
+  /** Follow the phone, or pin the deck to one scheme. */
+  appearance: AppearancePreference;
+  /** Native only: ask for biometrics / device passcode before showing sessions. */
+  requireUnlock: boolean;
+  /** Check GitHub Releases once when the launcher opens. */
+  autoCheckUpdates: boolean;
+}
+
+export const DEFAULT_PREFERENCES: AppPreferences = {
+  appearance: 'system',
+  requireUnlock: true,
+  autoCheckUpdates: true,
+};
+
+const PREFERENCES_KEY = 'ocrc.preferences.v1';
+
+/** Unknown or corrupt values fall back one field at a time — never all or nothing. */
+export async function loadPreferences(): Promise<AppPreferences> {
+  try {
+    const raw = await readRaw(PREFERENCES_KEY);
+    if (!raw) return DEFAULT_PREFERENCES;
+    const parsed = JSON.parse(raw) as Partial<AppPreferences>;
+    const appearance =
+      parsed.appearance === 'light' || parsed.appearance === 'dark' || parsed.appearance === 'system'
+        ? parsed.appearance
+        : DEFAULT_PREFERENCES.appearance;
+    return {
+      appearance,
+      requireUnlock:
+        typeof parsed.requireUnlock === 'boolean'
+          ? parsed.requireUnlock
+          : DEFAULT_PREFERENCES.requireUnlock,
+      autoCheckUpdates:
+        typeof parsed.autoCheckUpdates === 'boolean'
+          ? parsed.autoCheckUpdates
+          : DEFAULT_PREFERENCES.autoCheckUpdates,
+    };
+  } catch {
+    return DEFAULT_PREFERENCES;
+  }
+}
+
+export async function savePreferences(preferences: AppPreferences): Promise<void> {
+  await writeRaw(PREFERENCES_KEY, JSON.stringify(preferences));
 }
