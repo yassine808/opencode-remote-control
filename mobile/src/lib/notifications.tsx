@@ -40,7 +40,9 @@ const THROTTLE_MS = 10_000;
 type PermissionState = 'checking' | 'granted' | 'denied' | 'undetermined';
 
 function permissionState(status: { granted: boolean; canAskAgain: boolean }): PermissionState {
-  return status.granted ? 'granted' : status.canAskAgain ? 'undetermined' : 'denied';
+  if (status.granted) return 'granted';
+  if (status.canAskAgain) return 'undetermined';
+  return 'denied';
 }
 
 interface NotificationPermission {
@@ -51,7 +53,7 @@ interface NotificationPermission {
 
 const PermissionContext = createContext<NotificationPermission>({
   permission: 'undetermined',
-  request: async () => false,
+  request: () => Promise.resolve(false),
 });
 
 /** Null-safe for previews and for the web build. */
@@ -77,12 +79,13 @@ export function NotificationsProvider({ children }: Readonly<{ children: ReactNo
   useEffect(() => {
     if (!NATIVE) return;
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-      }),
+      handleNotification: () =>
+        Promise.resolve({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        }),
     });
   }, []);
 
@@ -306,12 +309,12 @@ async function permissionText(
 ): Promise<string> {
   try {
     const res = await api.sessionPermissionRequests(sessionID);
-    const requestID =
-      typeof data?.requestID === 'string'
-        ? data.requestID
-        : typeof data?.id === 'string'
-          ? data.id
-          : undefined;
+    let requestID: string | undefined;
+    if (typeof data?.requestID === 'string') {
+      requestID = data.requestID;
+    } else if (typeof data?.id === 'string') {
+      requestID = data.id;
+    }
     const request = res.data.find((item) => item.id === requestID) ?? res.data[0];
     if (request) return `${project} · ${describePermission(request)}`;
   } catch {
