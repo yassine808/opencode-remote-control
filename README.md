@@ -41,7 +41,7 @@ OpenCode runs on your machine, which is exactly where you are not. This app is t
 2. Tap it. Android will ask you to allow installs from the browser or file manager.
 3. Open **OpenCode Remote** and pair (below).
 
-The APK is release-signed, so a newer build installs over an older one. The tag and asset name carry the Android `versionCode` (`v1.1.1-5` → `opencode-remote-1.1.1-5.apk`); that code always increases.
+The APK is release-signed, so a newer build installs over an older one. The tag and asset name carry the Android `versionCode` (`v1.1.2-6` → `opencode-remote-1.1.2-6.apk`); that code always increases.
 
 ## Pair
 
