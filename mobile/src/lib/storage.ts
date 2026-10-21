@@ -187,7 +187,7 @@ export interface AppPreferences {
   appearance: AppearancePreference;
   /** Native only: ask for biometrics / device passcode before showing sessions. */
   requireUnlock: boolean;
-  /** Check GitHub Releases once when the launcher opens. */
+  /** Check GitHub Releases when the launcher opens and install newer builds. */
   autoCheckUpdates: boolean;
   /** Native only: alert when a prompt ends or the agent needs input. */
   notifications: boolean;

@@ -445,8 +445,8 @@ export default function SettingsScreen() {
         <Section title="Updates">
           <NavRow label="App version" value={version} onPress={() => router.push('/update')} />
           <SwitchRow
-            label="Check on launch"
-            hint="Look for a newer build whenever the launcher opens."
+            label="Update on launch"
+            hint="Download and install newer builds whenever the launcher opens."
             value={preferences.autoCheckUpdates}
             onValueChange={(autoCheckUpdates) => void save({ autoCheckUpdates })}
           />

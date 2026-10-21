@@ -49,6 +49,8 @@ import {
 import type { PermissionRequest, SessionInfo } from '@/lib/types';
 import {
   checkForUpdate,
+  downloadUpdate,
+  installUpdate,
   installedVersion,
   installedVersionCode,
   type UpdateInfo,
@@ -942,9 +944,12 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, [load, loadRecents, loadPinned]);
 
-  // One quiet GitHub check per launch; the row above the list only appears
-  // when a newer build exists.
+  // One quiet GitHub check per launch. A newer build is also downloaded and
+  // handed to the Android installer without a second tap; the browser has no
+  // installer, so it keeps the banner and the manual screen.
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  /** A failed or cancelled install waits for the next launch, not a retry loop. */
+  const autoUpdateTried = useRef(false);
 
   useEffect(() => {
     if (!preferences.autoCheckUpdates) return;
@@ -952,11 +957,26 @@ export default function HomeScreen() {
     // so it skips the check entirely.
     if (installedVersionCode() <= 0) return;
     let alive = true;
-    checkForUpdate()
-      .then((found) => {
+    const run = async () => {
+      try {
+        const found = await checkForUpdate();
+        if (!alive || !found) return;
+        if (Platform.OS === 'android' && !autoUpdateTried.current) {
+          autoUpdateTried.current = true;
+          try {
+            const uri = await downloadUpdate(found);
+            if (!alive) return;
+            await installUpdate(uri);
+          } catch {
+            // The banner below still opens the manual retry screen.
+          }
+        }
         if (alive) setUpdateInfo(found);
-      })
-      .catch(() => {});
+      } catch {
+        // Offline launches are normal — the next launch checks again.
+      }
+    };
+    void run();
     return () => {
       alive = false;
     };
