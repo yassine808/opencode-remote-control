@@ -2,7 +2,7 @@
   "expo": {
     "name": "OpenCode Remote",
     "slug": "opencode-remote",
-    "version": "1.1.2",
+    "version": "1.1.3",
     "runtimeVersion": {
       "policy": "nativeVersion"
     },
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.yassine808.opencoderemote",
-      "versionCode": 6,
+      "versionCode": 7,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
@@ -42,7 +42,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-image"
+      "expo-image",
+      "./plugins/with-cleartext"
     ],
     "experiments": {
       "typedRoutes": true,
