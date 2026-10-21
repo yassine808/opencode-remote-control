@@ -1,6 +1,8 @@
 import { b64encode } from './b64';
 import type {
   ActiveSessionsResponse,
+  FormAnswer,
+  FormInfo,
   ListResponse,
   MessageInfo,
   ModelListResponse,
@@ -218,6 +220,39 @@ export class OpenCodeApi {
       'POST',
       `/api/session/${sessionID}/permission/${requestID}/reply`,
       { decision },
+      signal,
+    );
+  }
+
+  /** Pending forms for one session. The server drops answered and cancelled forms. */
+  sessionForms(sessionID: string, signal?: AbortSignal) {
+    return this.request<{ data: FormInfo[] }>(
+      'GET',
+      `/api/session/${sessionID}/form`,
+      undefined,
+      signal,
+    );
+  }
+
+  replyForm(
+    sessionID: string,
+    formID: string,
+    answer: FormAnswer,
+    signal?: AbortSignal,
+  ) {
+    return this.request<void>(
+      'POST',
+      `/api/session/${sessionID}/form/${formID}/reply`,
+      { answer },
+      signal,
+    );
+  }
+
+  cancelForm(sessionID: string, formID: string, signal?: AbortSignal) {
+    return this.request<void>(
+      'DELETE',
+      `/api/session/${sessionID}/form/${formID}`,
+      undefined,
       signal,
     );
   }

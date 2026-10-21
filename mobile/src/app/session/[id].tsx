@@ -137,7 +137,7 @@ type RowBase =
   | { kind: 'reasoning'; id: string; text: string; active: boolean; ms?: number }
   | { kind: 'tool'; id: string; part: ToolPart }
   | { kind: 'footer'; id: string; text: string; ms: number | null }
-  | { kind: 'question'; id: string; part: ToolPart }
+  | { kind: 'question'; id: string; part: ToolPart; messageID: string }
   | { kind: 'group'; id: string; items: GroupItem[]; active: boolean }
   | { kind: 'error'; id: string; text: string }
   | { kind: 'caption'; id: string; text: string };
@@ -240,11 +240,12 @@ function assistantRows(msg: AssistantMessage, texts: string[]): RowBase[] {
       }
     } else if (part.type === 'tool') {
       const tool = part as ToolPart;
-      out.push({
-        kind: tool.name === 'question' ? 'question' : 'tool',
-        id: tool.id || `${msg.id}-x${i}`,
-        part: tool,
-      });
+      const id = tool.id || `${msg.id}-x${i}`;
+      if (tool.name === 'question') {
+        out.push({ kind: 'question', id, part: tool, messageID: msg.id });
+      } else {
+        out.push({ kind: 'tool', id, part: tool });
+      }
     }
   });
   if (msg.error?.message) out.push({ kind: 'error', id: `${msg.id}-err`, text: msg.error.message });
@@ -395,7 +396,7 @@ function groupRows(flat: Row[], running: boolean): Row[] {
 }
 
 /** One transcript cell per row kind. */
-function renderRow(row: Row, theme: Palette) {
+function renderRow(row: Row, theme: Palette, sessionID?: string) {
   if (row.kind === 'image') {
     return <MessageImage uri={row.uri} label={row.label} align="right" />;
   }
@@ -426,7 +427,7 @@ function renderRow(row: Row, theme: Palette) {
     return <TurnFooter text={row.text} ms={row.ms} />;
   }
   if (row.kind === 'question') {
-    return <QuestionCard part={row.part} />;
+    return <QuestionCard part={row.part} sessionID={sessionID} messageID={row.messageID} />;
   }
   if (row.kind === 'error') {
     return (
@@ -1582,7 +1583,7 @@ export default function SessionScreen() {
                       !baselineRef.current.has(row.mid) &&
                       !playedRef.current.has(row.id)
                     }>
-                    {renderRow(row, theme)}
+                    {renderRow(row, theme, sessionID)}
                   </RowEnter>
                 </View>
               )}

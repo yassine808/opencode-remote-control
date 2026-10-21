@@ -224,6 +224,25 @@ export interface PermissionRequest {
 
 export type PermissionDecision = 'once' | 'always' | 'reject';
 
+// ---------- forms ----------
+
+/**
+ * A pending interactive form. The question tool creates one per call and
+ * tags it with `metadata.kind: "question"` plus the originating tool ids, so
+ * a transcript card can find its own form without a bespoke endpoint.
+ */
+export interface FormInfo {
+  id: string;
+  sessionID: string;
+  title: string;
+  metadata?: Record<string, unknown>;
+  fields: unknown[];
+}
+
+/** Question answers are strings (single) or string arrays (multiple). */
+export type FormValue = string | number | boolean | string[];
+export type FormAnswer = Record<string, FormValue>;
+
 // ---------- pairing ----------
 
 export interface PairingCode {
