@@ -41,12 +41,21 @@ const PAIR_COMMAND = 'opencode pair --remote --yes';
 const NATIVE = Platform.OS !== 'web';
 
 /**
- * Matches every `https?://host/…/auth/connect/<code>` in a block of text.
+ * The head of a pairing link — `scheme://host` — in a block of text.
+ *
  * The pairing command prints a localhost link *and* the tunnel link on
  * separate lines, so the parser must consider all of them — taking the first
  * would hand the phone `http://127.0.0.1:…`, which it can never reach.
+ *
+ * Finding the links takes two linear passes (this pattern, then a plain
+ * string scan for the `…/auth/connect/<code>` tail) instead of one
+ * `[^\s]*?` wildcard: a lazy wildcard that hunts for a suffix retries every
+ * prefix, which is quadratic on the QR art the command also prints.
  */
-const PAIRING_LINK_RE = /(https?:\/\/[^\s/?#]+)[^\s]*?\/auth\/connect\/([A-Za-z0-9_-]+)/g;
+const LINK_HEAD_RE = /https?:\/\/[^\s/?#]+/g;
+const CONNECT_PATH = '/auth/connect/';
+/** The code alphabet, matched forward from a known offset via `lastIndex`. */
+const CODE_RUN_RE = /[A-Za-z0-9_-]+/y;
 
 type Phase = 'idle' | 'connecting' | 'paired' | 'failed';
 
@@ -82,16 +91,67 @@ function cleanUrls(urls: readonly unknown[]): string[] {
   return [...seen];
 }
 
+/**
+ * The first `/auth/connect/<code>` at or after `from`, inside the same
+ * unbroken run of non-space characters — plus where that code ends.
+ */
+function connectLinkAfter(text: string, from: number): { code: string; end: number } | null {
+  const space = text.slice(from).search(/\s/);
+  const runEnd = space === -1 ? text.length : from + space;
+  let at = text.indexOf(CONNECT_PATH, from);
+  while (at !== -1 && at < runEnd) {
+    CODE_RUN_RE.lastIndex = at + CONNECT_PATH.length;
+    const match = CODE_RUN_RE.exec(text);
+    if (match) return { code: match[0], end: at + CONNECT_PATH.length + match[0].length };
+    at = text.indexOf(CONNECT_PATH, at + 1);
+  }
+  return null;
+}
+
 /** All pairing links embedded in arbitrary text (QR, terminal block, chat message). */
 function linksInText(text: string): { code: string; urls: string[] } | null {
   const urls: string[] = [];
   let code = '';
-  for (const match of text.matchAll(PAIRING_LINK_RE)) {
-    if (!code) code = match[2];
-    urls.push(match[1]);
+  LINK_HEAD_RE.lastIndex = 0;
+  for (let head = LINK_HEAD_RE.exec(text); head; head = LINK_HEAD_RE.exec(text)) {
+    const link = connectLinkAfter(text, head.index + head[0].length);
+    if (!link) continue;
+    if (!code) code = link.code;
+    urls.push(head[0]);
+    // Resume after this code, so a link nested in another link's tail is not
+    // reported twice.
+    LINK_HEAD_RE.lastIndex = link.end;
   }
   if (!code) return null;
   return { code, urls: cleanUrls(urls) };
+}
+
+/** The URLs a JSON pairing payload carries, else whatever the text links gave us. */
+function jsonPairingUrls(
+  payload: { urls?: unknown; url?: unknown },
+  fallback: readonly string[],
+): string[] {
+  if (Array.isArray(payload.urls) && payload.urls.length > 0) return cleanUrls(payload.urls);
+  if (payload.url) return cleanUrls([payload.url]);
+  return cleanUrls(fallback);
+}
+
+/** The pairing QR's JSON payload, when the input carries one. */
+function jsonPairing(text: string, fallback: readonly string[]): ParsedPairing | null {
+  if (!text.startsWith('{') && !text.includes('"urls"')) return null;
+  try {
+    const payload = JSON.parse(text.slice(text.indexOf('{'))) as {
+      code?: unknown;
+      urls?: unknown;
+      url?: unknown;
+    };
+    if (typeof payload?.code === 'string' && payload.code) {
+      return { code: payload.code, urls: jsonPairingUrls(payload, fallback) };
+    }
+  } catch {
+    // Not JSON — the caller falls back to link parsing.
+  }
+  return null;
 }
 
 /**
@@ -104,25 +164,8 @@ function parsePairingInput(raw: string): ParsedPairing | null {
   if (!text) return null;
 
   const fromText = linksInText(text);
-
-  if (text.startsWith('{') || text.includes('"urls"')) {
-    try {
-      const start = text.indexOf('{');
-      const obj = JSON.parse(text.slice(start)) as { code?: string; urls?: string[]; url?: string };
-      if (typeof obj.code === 'string' && obj.code) {
-        const urls = cleanUrls(
-          Array.isArray(obj.urls) && obj.urls.length > 0
-            ? obj.urls
-            : obj.url
-              ? [obj.url]
-              : (fromText?.urls ?? []),
-        );
-        return { code: obj.code, urls };
-      }
-    } catch {
-      // fall through to link parsing
-    }
-  }
+  const fromJson = jsonPairing(text, fromText?.urls ?? []);
+  if (fromJson) return fromJson;
 
   if (!fromText) return null;
   return { code: fromText.code, urls: fromText.urls };
@@ -426,7 +469,9 @@ export default function SetupScreen() {
     const parsed = parsePairingInput(manualText);
     if (!parsed) {
       setPhase('failed');
-      setError('That does not look like a pairing link. Paste the link (or the JSON contents of the QR).');
+      setError(
+        'That is not a pairing link. Paste the full link (or the JSON contents of the QR) — it ends in /auth/connect/<code>. A bare server address has no one-time code.',
+      );
       return;
     }
     void pair(parsed);

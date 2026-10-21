@@ -251,7 +251,9 @@ export async function exchangePairingCode(baseUrl: string, code: string): Promis
       body = text ? JSON.parse(text) : undefined;
     } catch {
       // HTML error page — keep the text, trimmed so the UI stays readable.
-      body = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || undefined;
+      // `[^<>]` (not `[^>]`) keeps the scan linear: the class cannot re-enter
+      // the tag on pages where a bare `<` sits in the text.
+      body = text.replace(/<[^<>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || undefined;
     }
     throw new HttpError(res.status, body);
   }

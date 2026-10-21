@@ -37,9 +37,11 @@ type Block =
   | { kind: 'table'; header: string[]; rows: string[][] };
 
 const FENCE = /^```([\w+#.-]*)\s*$/;
-const HEADING = /^(#{1,6})[ \t]+(.*)$/;
-const BULLET = /^([ \t]*)[-*+][ \t]+(.*)$/;
-const ORDERED = /^([ \t]*)(\d+)[.)][ \t]+(.*)$/;
+// Markers match only their own prefix; the line's content is the slice after
+// it. A trailing `(.*)$` would stack quantifiers and backtrack on long lines.
+const HEADING = /^(#{1,6})[ \t]+/;
+const BULLET = /^([ \t]*)[-*+][ \t]+/;
+const ORDERED = /^([ \t]*)(\d+)[.)][ \t]+/;
 const QUOTE = /^>\s?(.*)$/;
 const TABLE_SEP = /^[ \t|:-]*$/;
 
@@ -94,10 +96,10 @@ function parseList(lines: string[], start: number): BlockParse {
     const b = BULLET.exec(lines[i]);
     const o = ORDERED.exec(lines[i]);
     if (b) {
-      items.push({ depth: Math.floor(b[1].length / 2), marker: '•', text: b[2] });
+      items.push({ depth: Math.floor(b[1].length / 2), marker: '•', text: lines[i].slice(b[0].length) });
     } else if (o) {
       ordered = true;
-      items.push({ depth: Math.floor(o[1].length / 2), marker: `${o[2]}.`, text: o[3] });
+      items.push({ depth: Math.floor(o[1].length / 2), marker: `${o[2]}.`, text: lines[i].slice(o[0].length) });
     } else {
       break;
     }
@@ -166,7 +168,7 @@ function parseBlocks(text: string): Block[] {
 
     const heading = HEADING.exec(line);
     if (heading) {
-      blocks.push({ kind: 'heading', level: heading[1].length, text: heading[2] });
+      blocks.push({ kind: 'heading', level: heading[1].length, text: line.slice(heading[0].length) });
       i++;
       continue;
     }
@@ -338,8 +340,74 @@ function withAlpha(hex: string, a: number): string {
 
 // ---------- inline model ----------
 
-const INLINE =
-  /(?:`[^`\n]+`)|(?:\[[^\]]+\]\([^)\s]+\))|(?:\*\*[^*]+\*\*)|(?:\*[^*\n]+\*)|(?:_[^_\n]+_)|(?:~~[^~]+~~)/g;
+/**
+ * Inline tokens are found by probing each delimiter position, in priority
+ * order. A single alternation rescans the tail of the string whenever a
+ * branch fails — quadratic on inputs like a long run of "[" — so candidates
+ * come from a plain scan and each pattern is only tried where it can start.
+ * The patterns are sticky: a probe costs one token attempt, never a tail scan.
+ */
+const INLINE_CANDIDATE = /[`[*_~]/g;
+const INLINE_CODE = /`[^`\n]+`/y;
+const INLINE_LINK = /\[[^\]]+\]\([^)\s]+\)/y;
+const INLINE_BOLD = /\*\*[^*]+\*\*/y;
+const INLINE_ITALIC = /\*[^*\n]+\*/y;
+const INLINE_UNDERLINE = /_[^_\n]+_/y;
+const INLINE_STRIKE = /~~[^~]+~~/y;
+
+interface InlineSpan {
+  start: number;
+  end: number;
+}
+
+/** Positions of the last closing delimiter of each kind. */
+interface InlineEnds {
+  backtick: number;
+  bracket: number;
+  star: number;
+  underscore: number;
+  tilde: number;
+}
+
+/** Match `re` only when it starts exactly at `pos`, and only if a closer exists. */
+function matchAt(re: RegExp, text: string, pos: number, lastClose: number): string | null {
+  if (pos + 1 >= lastClose) return null;
+  re.lastIndex = pos; // sticky — the attempt is anchored at `pos`
+  return re.exec(text)?.[0] ?? null;
+}
+
+/** The token starting at `pos`, or null. Branches are keyed by their opener. */
+function probeToken(text: string, pos: number, ends: InlineEnds): string | null {
+  const ch = text[pos];
+  if (ch === '`') return matchAt(INLINE_CODE, text, pos, ends.backtick);
+  if (ch === '[') return matchAt(INLINE_LINK, text, pos, ends.bracket);
+  if (ch === '*') {
+    return matchAt(INLINE_BOLD, text, pos, ends.star) ?? matchAt(INLINE_ITALIC, text, pos, ends.star);
+  }
+  if (ch === '_') return matchAt(INLINE_UNDERLINE, text, pos, ends.underscore);
+  return matchAt(INLINE_STRIKE, text, pos, ends.tilde);
+}
+
+function scanInline(text: string): InlineSpan[] {
+  const spans: InlineSpan[] = [];
+  const ends: InlineEnds = {
+    backtick: text.lastIndexOf('`'),
+    bracket: text.lastIndexOf(']'),
+    star: text.lastIndexOf('*'),
+    underscore: text.lastIndexOf('_'),
+    tilde: text.lastIndexOf('~'),
+  };
+  INLINE_CANDIDATE.lastIndex = 0;
+  let c: RegExpExecArray | null;
+  while ((c = INLINE_CANDIDATE.exec(text)) !== null) {
+    const token = probeToken(text, c.index, ends);
+    if (token !== null) {
+      spans.push({ start: c.index, end: c.index + token.length });
+      INLINE_CANDIDATE.lastIndex = c.index + token.length;
+    }
+  }
+  return spans;
+}
 
 const LINK_TOKEN = /^\[([^\]]+)\]\(([^)\s]+)\)$/;
 
@@ -419,17 +487,12 @@ function renderInline(
 
   const push = (node: ReactNode) => out.push(<Text key={`${keyPrefix}-${key++}`}>{node}</Text>);
 
-  // A fresh regex per call: renderInline recurses (bold inside bold, link
-  // labels), and a shared /g regex would hand the outer loop the inner
-  // loop's lastIndex.
-  const re = new RegExp(INLINE.source, 'g');
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) != null) {
-    if (m.index > last) push(text.slice(last, m.index));
-    const token = m[0];
+  for (const span of scanInline(text)) {
+    if (span.start > last) push(text.slice(last, span.start));
+    const token = text.slice(span.start, span.end);
     const kind = inlineKind(token);
     push(renderToken(token, kind, theme, `${keyPrefix}-${kind[0]}${key}`, bold));
-    last = m.index + token.length;
+    last = span.end;
   }
 
   if (last < text.length) push(text.slice(last));

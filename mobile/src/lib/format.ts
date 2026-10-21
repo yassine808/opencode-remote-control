@@ -10,7 +10,7 @@ export function fmtInt(n: number): string {
     const ch = s[i];
     if (ch >= '0' && ch <= '9') {
       digits += 1;
-      const comma = digits % 3 === 0 && i > 0 && /[A-Za-z0-9_]/.test(s[i - 1]);
+      const comma = digits % 3 === 0 && i > 0 && /\w/.test(s[i - 1]);
       out = comma ? `,${ch}${out}` : `${ch}${out}`;
     } else {
       digits = 0;
