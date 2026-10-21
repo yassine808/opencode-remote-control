@@ -23,6 +23,7 @@
     "expo-linear-gradient": "~58.0.3",
     "expo-linking": "~58.0.13",
     "expo-local-authentication": "~58.0.2",
+    "expo-notifications": "~58.1.5",
     "expo-router": "~58.0.24",
     "expo-secure-store": "~58.0.2",
     "expo-splash-screen": "~58.0.10",
@@ -48,7 +49,11 @@
     "@types/react": "~19.3.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~58.0.4",
+    "expo-doctor": "1.21.5",
     "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   },
   "scripts": {
     "start": "expo start --port 8977",
